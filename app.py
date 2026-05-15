@@ -2,124 +2,134 @@ import streamlit as st
 import pandas as pd
 from collections import Counter
 
-# Page Setup
-st.set_page_config(page_title="MAYA v62.0 - Auto Chain Engine", layout="wide")
+st.set_page_config(page_title="MAYA v63.0 - Data Fix & Split", layout="wide")
 
 st.markdown("""
     <style>
-    .alert-box { background: #fee2e2; color: #b91c1c; padding: 15px; border-radius: 12px; text-align: center; border: 2px solid #ef4444; font-weight: bold; }
-    .success-box { background: #dcfce7; color: #166534; padding: 15px; border-radius: 12px; text-align: center; border: 2px solid #22c55e; }
-    .grid-box { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
-    .ank-card { background: #ffffff; border: 2px solid #3b82f6; padding: 15px; border-radius: 10px; text-align: center; }
-    .unique-ank { font-size: 35px; font-weight: bold; color: #1e40af; text-shadow: 2px 2px #e2e8f0; }
+    .live-card { background: #0f172a; color: #fbbf24; padding: 15px; border-radius: 12px; text-align: center; border: 2px solid #fbbf24; }
+    .split-container { display: flex; gap: 20px; margin-top: 20px; }
+    .match-pane { flex: 1; background: #f0fdf4; border: 2px solid #22c55e; padding: 15px; border-radius: 12px; }
+    .unmatch-pane { flex: 1; background: #fef2f2; border: 2px solid #ef4444; padding: 15px; border-radius: 12px; }
+    .grid-ank { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .ank-box { background: white; padding: 10px; border-radius: 8px; text-align: center; font-weight: bold; font-size: 18px; border: 1px solid #ddd; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎯 MAYA v62.0 (Automatic Pattern Chain & Cross)")
+st.title("🎯 MAYA v63.0 (Data Correction & Split Tracking)")
 
-def get_timeframe_prediction(flat_data, curr_pos):
-    """Aapka 1-90 Timeframe logic: Pichle zero-accuracy gaps se expected nikalna"""
-    expected_jodis = []
-    # Scanning 1 to 90 timeframes (Step-Jumps)
-    for step in range(1, 91):
-        idx = curr_pos - step
-        if idx >= 0 and flat_data[idx] > 0:
-            # Check if this timeframe is 'Hot' (Historically due)
-            val = flat_data[idx]
-            expected_jodis.append(str(val).zfill(2))
-        if len(expected_jodis) >= 15: break # Limit for cross-check
-    return expected_jodis
+def get_clean_val(val):
+    """Excel data ko strictly clean karne ke liye"""
+    try:
+        s_val = str(val).strip().split('.')[0]
+        if s_val.isdigit():
+            return s_val.zfill(2)
+    except:
+        pass
+    return "XX"
 
-def calculate_v62(df, date_idx, target_s):
+def calculate_v63(df, date_idx, target_s):
+    # Data Extraction with strict cleaning
     shifts_order = ['DS', 'FB', 'GB', 'GL', 'DB', 'SG']
     flat_data = []
     for _, row in df.iterrows():
         for s in shifts_order:
-            v = str(row.get(s, "XX")).split('.')[0]
-            flat_data.append(int(v) if v.isdigit() and int(v) > 0 else -1)
+            val = get_clean_val(row.get(s, "XX"))
+            flat_data.append(int(val) if val != "XX" else -1)
     
     curr_pos = (date_idx * 6) + shifts_order.index(target_s)
     
-    # 1. Check for Trigger (Was previous shift a history match?)
-    trigger_found = False
-    trigger_val = -1
-    for p in range(curr_pos - 6, curr_pos):
-        if p >= 0 and flat_data[p] > 0:
-            # Simulation of v58/60 match (simplified for logic)
-            trigger_val = flat_data[p]
-            trigger_found = True
+    # 36-Base Logic
+    base_val = -1
+    for i in range(1, 20):
+        if curr_pos - i >= 0 and flat_data[curr_pos-i] > 0:
+            base_val = flat_data[curr_pos-i]; break
+    if base_val == -1: base_val = 14
     
-    # 2. Generate Pattern Predictions (7, 14, 28)
-    pattern_predictions = []
-    if trigger_found:
-        d1, d2 = trigger_val // 10, trigger_val % 10
-        pattern_predictions = [f"{(d1+5)%10}{(d2+1)%10}", f"{d2}{(d1+2)%10}", f"{(d1+1)%10}{d2}"]
+    d1, d2 = base_val // 10, base_val % 10
+    pa, pb = (d1 + 1) % 10 if d1 != d2 else (d1 + 5) % 10, (d2 + 1) % 10
+    ra, rb = (pa + 5) % 10, (pb + 5) % 10
+    
+    blocked = set()
+    for a in {pa, ra}:
+        for i in range(10): blocked.add(f"{a}{i}")
+    for b in {pb, rb}:
+        for i in range(10): blocked.add(f"{i}{b}")
+    
+    t36_base = [str(i).zfill(2) for i in range(100) if str(i).zfill(2) not in blocked]
+    
+    # Current 25 & History 30
+    curr_25 = t36_base[:25]
+    hist_data = df[target_s].tail(90).dropna()
+    hist_vals = [get_clean_val(v) for v in hist_data if get_clean_val(v) != "XX"]
+    hist_30 = [k for k, v in Counter(hist_vals).most_common(30)]
+    
+    # SPLIT LOGIC
+    matched_anks = [j for j in curr_25 if j in hist_30]
+    unmatched_anks = [j for j in curr_25 if j not in hist_30]
+    
+    return matched_anks, unmatched_anks
 
-    # 3. Get Timeframe-based Predictions (1-90 Rule)
-    tf_predictions = get_timeframe_prediction(flat_data, curr_pos)
-    
-    # 4. CROSS VERIFICATION (Unique Selection)
-    # Jo ank dono mein hai, wahi hamara 'Unique' ank hai
-    unique_strong = [p for p in pattern_predictions if p in tf_predictions]
-    
-    return trigger_found, trigger_val, pattern_predictions, tf_predictions, unique_strong
-
-uploaded_file = st.file_uploader("📂 Upload 0DSP0 File", type=["xlsx", "csv"])
+uploaded_file = st.file_uploader("📂 Upload Excel", type=["xlsx", "csv"])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
+    # Column Normalization
     df.columns = [str(c).strip().upper() for c in df.columns]
+    mapping = {'FD': 'FB', 'FBD': 'FB', 'GD': 'GB', 'GZB': 'GB', 'GZ': 'GB'}
+    df = df.rename(columns=mapping)
     
     sel_date = st.selectbox("📅 Date:", options=df['DATE'].astype(str).unique().tolist()[::-1])
     target_s = st.selectbox("🎰 Shift:", options=['DS', 'FB', 'GB', 'GL', 'DB', 'SG'])
     
     idx = df[df['DATE'].astype(str) == sel_date].index[0]
-    is_triggered, t_val, patterns, tf_list, unique_list = calculate_v62(df, idx, target_s)
+    matched, unmatched = calculate_v63(df, idx, target_s)
+    
+    # Live Result with fix
+    res_raw = get_clean_val(df.iloc[idx].get(target_s, "XX"))
+    st.markdown(f'<div class="live-card">LIVE RESULT: <span style="font-size:35px;">{res_raw}</span></div>', unsafe_allow_html=True)
 
-    # UI: Auto-Alert
-    if is_triggered:
-        st.markdown(f'<div class="success-box">🔥 TRIGGER ACTIVE: Last Match {t_val} found in chain! Agli 6 shifton ke liye pattern aur timeframe cross-verify ho rahe hain.</div>', unsafe_allow_html=True)
-    else:
-        st.markdown(f'<div class="alert-box">❄️ WAITING FOR TRIGGER: Abhi koi match trigger nahi mila hai. Market normal patterns follow kar raha hai.</div>', unsafe_allow_html=True)
+    # DUAL PANE TRACKING
+    st.markdown('<div class="split-container">', unsafe_allow_html=True)
+    
+    # Match Pane
+    st.markdown(f"""
+        <div class="match-pane">
+            <h3 style="color:#166534;">💎 MATCHING ANKS ({len(matched)})</h3>
+            <p style="font-size:12px;">Ye history aur prediction dono mein hain.</p>
+            <div class="grid-ank">
+                {"".join([f'<div class="ank-box" style="color:#166534; border-color:#22c55e;">{j}</div>' for j in matched])}
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    # Unmatch Pane
+    st.markdown(f"""
+        <div class="unmatch-pane">
+            <h3 style="color:#b91c1c;">🚫 UNMATCH ANKS ({len(unmatched)})</h3>
+            <p style="font-size:12px;">Ye sirf current prediction mein hain.</p>
+            <div class="grid-ank">
+                {"".join([f'<div class="ank-box" style="color:#b91c1c; border-color:#ef4444;">{j}</div>' for j in unmatched])}
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
+    # Analysis Backtest
     st.divider()
-
-    # Results Display
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("🛠️ Step 1: 32-Pattern Logic")
-        st.write(f"Patterns (7, 14, 28): {', '.join(patterns)}")
-        
-    with c2:
-        st.subheader("⏳ Step 2: 1-90 Time-Frame Logic")
-        st.write(f"Top TF Gaps: {', '.join(tf_list[:5])}...")
-
-    st.divider()
-
-    # THE UNIQUE RESULT
-    st.subheader("💎 FINAL UNIQUE PREDICTION (Cross Verified)")
-    if unique_list:
-        cols = st.columns(len(unique_list))
-        for i, u in enumerate(unique_list):
-            with cols[i]:
-                st.markdown(f'<div class="ank-card"><span style="color:gray; font-size:12px;">Super Strong Match</span><br><span class="unique-ank">{u}</span></div>', unsafe_allow_html=True)
-    else:
-        st.info("Dono logics mein abhi koi common ank nahi mil raha. Pattern aur Timeframe alag chal rahe hain.")
-
-    # 6-Month Backtest
-    st.divider()
-    st.subheader("📜 6-Month Cross-Verification History")
+    st.subheader("📜 Efficiency Tracker (Last 15 Shifts)")
     hist_list = []
     shifts_order = ['DS', 'FB', 'GB', 'GL', 'DB', 'SG']
     curr_pos = (idx * 6) + shifts_order.index(target_s)
-    for p in range(curr_pos - 10, curr_pos + 1):
+    for p in range(curr_pos - 15, curr_pos + 1):
         if p < 0: continue
         d_idx, s_name = p // 6, shifts_order[p % 6]
-        _, _, _, _, h_unique = calculate_v62(df, d_idx, s_name)
-        actual = str(df.iloc[d_idx].get(s_name, "XX")).split('.')[0]
+        h_match, h_unmatch = calculate_v63(df, d_idx, s_name)
+        actual = get_clean_val(df.iloc[d_idx].get(s_name, "XX"))
         status = "❌"
-        if actual.isdigit() and str(int(actual)).zfill(2) in h_unique:
-            status = "💎 UNIQUE SUPER HIT"
+        if actual != "XX":
+            if actual in h_match: status = "💎 MATCH HIT"
+            elif actual in h_unmatch: status = "✅ UNMATCH HIT"
         hist_list.append({"Shift": f"{df.iloc[d_idx]['DATE']} {s_name}", "Result": actual, "Status": status})
     st.table(pd.DataFrame(hist_list))
-    
+
