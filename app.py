@@ -2,74 +2,78 @@ import streamlit as st
 import pandas as pd
 
 # Page Setup
-st.set_page_config(page_title="MAYA v50.0 - Recovery Engine", layout="wide")
+st.set_page_config(page_title="MAYA v51.0 - Unique Engine", layout="wide")
 
-# High-Visibility UI
+# High-Visibility UI Styling
 st.markdown("""
     <style>
-    .live-res { background: #1e293b; color: #fbbf24; padding: 20px; border-radius: 15px; text-align: center; border: 3px solid #fbbf24; margin-bottom: 20px;}
-    .grid-64 { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; margin-bottom: 20px; }
-    .grid-16 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; max-width: 400px; margin: 0 auto; }
-    .item-target { background: #f0fdf4; color: #166534; padding: 12px; border-radius: 8px; font-weight: bold; text-align: center; border: 1px solid #bbf7d0; font-size: 18px; }
-    .item-64 { background: #f8fafc; color: #475569; padding: 5px; border-radius: 4px; text-align: center; font-size: 12px; border: 1px solid #e2e8f0; }
+    .live-card { background: #1e293b; color: #fbbf24; padding: 15px; border-radius: 12px; text-align: center; border: 2px solid #fbbf24; margin-bottom: 20px; }
+    .grid-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-width: 400px; margin: 10px auto; }
+    .super-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 300px; margin: 10px auto; }
+    .grid-item { background: #ffffff; color: #1e40af; padding: 12px; border-radius: 8px; font-size: 20px; font-weight: bold; text-align: center; border: 2px solid #bfdbfe; }
+    .super-item { background: #fffbeb; color: #92400e; padding: 15px; border-radius: 8px; font-size: 22px; font-weight: bold; text-align: center; border: 2px solid #fde68a; }
     .status-hit { color: #16a34a; font-weight: bold; }
-    .status-fail { color: #dc2626; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎯 MAYA v50.0 (All-Shift 64-Ank Recovery)")
+st.title("🎯 MAYA v51.0 (Automatic Time-Frame Jump)")
 
-def get_flat_data(df):
-    shifts = ['DS', 'FB', 'GB', 'GL', 'DB', 'SG']
-    flat = []
-    for _, row in df.iterrows():
-        for s in shifts:
-            v = str(row.get(s, "XX")).split('.')[0]
-            flat.append(int(v) if v.isdigit() else -1)
-    return flat
-
-def calculate_v50_logic(df, date_idx, target_s):
-    flat_data = get_flat_data(df)
+# --- DYNAMIC DIVERSITY SEARCH ---
+def get_unique_base_logic(df, date_idx, shift_col):
+    """Data na hone par piche jump maarna jab tak 4 unique digits na mil jayein"""
     shifts_order = ['DS', 'FB', 'GB', 'GL', 'DB', 'SG']
-    curr_pos = (date_idx * 6) + shifts_order.index(target_s)
+    current_flat_pos = (date_idx * 6) + shifts_order.index(shift_col)
     
-    # 1. Finding Pure Base (Like v47.0)
-    base_val = -1
-    for i in range(1, 20):
-        if curr_pos - i >= 0 and flat_data[curr_pos - i] > 0:
-            base_val = flat_data[curr_pos - i]
-            break
-    if base_val == -1: base_val = 14
+    # All-shift flattening for jump
+    flat_data = []
+    for _, row in df.iterrows():
+        for s in shifts_order:
+            v = str(row.get(s, "XX")).split('.')[0]
+            flat_data.append(int(v) if v.isdigit() and int(v) > 0 else -1)
 
-    d1, d2 = base_val // 10, base_val % 10
-    pa = (d1 + 1) % 10 if d1 != d2 else (d1 + 5) % 10
-    pb = (d2 + 1) % 10
-    ra, rb = (pa + 5) % 10, (pb + 5) % 10
+    # Jump search (1 to 120 positions back)
+    for jump in range(1, 120):
+        pos = current_flat_pos - jump
+        if pos < 0: break
+        
+        base_val = flat_data[pos]
+        if base_val != -1:
+            d1, d2 = base_val // 10, base_val % 10
+            pa = (d1 + 1) % 10 if d1 != d2 else (d1 + 5) % 10
+            pb = (d2 + 1) % 10
+            ra, rb = (pa + 5) % 10, (pb + 5) % 10
+            
+            # Agar charon ank alag hain, toh hi return karo
+            if len({pa, ra, pb, rb}) == 4:
+                return pa, ra, pb, rb, jump
+                
+    return 1, 6, 2, 7, 0 # Fallback
+
+def calculate_v51(df, idx, target_s):
+    # 1. Get 4 Unique Digits using Timeframe Jump
+    pa, ra, pb, rb, used_jump = get_unique_base_logic(df, idx, target_s)
     
-    # 2. Level 1: Generate 64 Eliminated Jodis (Blocking)
+    # 2. Level 1: Generate 36 Target Jodis (Eliminating 64)
     blocked_64 = set()
     for a in {pa, ra}:
         for i in range(10): blocked_64.add(f"{a}{i}")
     for b in {pb, rb}:
         for i in range(10): blocked_64.add(f"{i}{b}")
     
-    # 3. Level 2: Target Jodis (36 Anks) - v47 Style
     target_36 = [str(i).zfill(2) for i in range(100) if str(i).zfill(2) not in blocked_64]
     
-    # 4. Reverse Filter (Removing Worst Gaps from these 36)
-    # Scanning All-Shift Chain for failures
-    final_16 = []
-    extra_hatao = set()
-    for g in [6, 12]: # Gaps in All-Shift chain (1 and 2 full rounds)
-        if curr_pos - g >= 0:
-            v = flat_data[curr_pos - g]
-            if v != -1:
-                for i in range(10):
-                    extra_hatao.add(f"{v//10}{i}")
-                    extra_hatao.add(f"{i}{v%10}")
+    # 3. Level 2: Eliminate Worst Gaps (5-5 ank filter)
+    # Using a secondary jump for extra elimination
+    w_pa, w_ra, w_pb, w_rb, _ = get_unique_base_logic(df, idx-5, target_s) # 5 days shifted search
     
+    extra_hatao = set()
+    for a in {w_pa, w_ra}:
+        for i in range(10): extra_hatao.add(f"{a}{i}")
+    for b in {w_pb, w_rb}:
+        for i in range(10): extra_hatao.add(f"{i}{b}")
+        
     final_16 = [j for j in target_36 if j not in extra_hatao]
-    return target_36, final_16[:16]
+    return final_16[:16], final_16[:9], used_jump
 
 uploaded_file = st.file_uploader("📂 Upload Excel", type=["xlsx", "csv"])
 
@@ -78,56 +82,47 @@ if uploaded_file:
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.rename(columns={'FD': 'FB', 'GD': 'GB', 'FBD': 'FB', 'GZB': 'GB'})
     
-    sel_date = st.selectbox("📅 Date:", options=df['DATE'].astype(str).unique().tolist()[::-1])
-    target_s = st.selectbox("🎰 Shift:", options=['DS', 'FB', 'GB', 'GL', 'DB', 'SG'])
+    c1, c2 = st.columns(2)
+    with c1: sel_date = st.selectbox("📅 Date:", options=df['DATE'].astype(str).unique().tolist()[::-1])
+    with c2: target_s = st.selectbox("🎰 Shift:", options=['DS', 'FB', 'GB', 'GL', 'DB', 'SG'])
     
     idx = df[df['DATE'].astype(str) == sel_date].index[0]
     
-    # --- LIVE RESULT ---
-    res_val = str(df.iloc[idx].get(target_s, "XX")).split('.')[0]
-    st.markdown(f'<div class="live-res">LIVE RESULT: <span style="font-size:35px; font-weight:bold;">{res_val}</span></div>', unsafe_allow_html=True)
+    # Calculate with Jump Logic
+    t16, t9, jump_val = calculate_v51(df, idx, target_s)
+    
+    # --- LIVE DISPLAY ---
+    res_raw = str(df.iloc[idx].get(target_s, "XX")).split('.')[0]
+    st.markdown(f'<div class="live-card"><span style="font-size:14px;">LIVE RESULT</span><br><span style="font-size:35px; font-weight:bold;">{res_raw}</span><br><span style="font-size:12px;">Used Timeframe Jump: {jump_val} Shifts</span></div>', unsafe_allow_html=True)
 
-    # Calculate
-    t36, t16 = calculate_v50_logic(df, idx, target_s)
+    col_l, col_r = st.columns(2)
+    with col_l:
+        st.write("**✅ Stable Target (Square 16)**")
+        grid_html = '<div class="grid-container">'
+        for j in t16: grid_html += f'<div class="grid-item">{j}</div>'
+        grid_html += '</div>'
+        st.markdown(grid_html, unsafe_allow_html=True)
 
-    # --- 64 ANK VERIFICATION (The Foundation) ---
-    st.subheader("📋 Step 1: 36-Ank Target Base (Eliminated 64)")
-    grid_64_html = '<div class="grid-64">'
-    for j in t36: grid_64_html += f'<div class="item-64">{j}</div>'
-    grid_64_html += '</div>'
-    st.markdown(grid_64_html, unsafe_allow_html=True)
-
-    st.divider()
-
-    # --- FINAL 16 ANK (The Square Box) ---
-    st.subheader("💎 Step 2: Final 16 Specialist Anks")
-    grid_16_html = '<div class="grid-16">'
-    for j in t16: grid_16_html += f'<div class="item-target">{j}</div>'
-    grid_16_html += '</div>'
-    st.markdown(grid_16_html, unsafe_allow_html=True)
+    with col_r:
+        st.write("**💎 Super Diamond (Square 9)**")
+        grid_html = '<div class="super-grid">'
+        for j in t9: grid_html += f'<div class="super-item">{j}</div>'
+        grid_html += '</div>'
+        st.markdown(grid_html, unsafe_allow_html=True)
 
     # --- HISTORY ---
     st.divider()
-    st.subheader("📜 Backtest History (Check 8-13 May Accuracy)")
+    st.subheader("📜 Backtest History (Jump-Logic Verification)")
     hist = []
-    flat_data = get_flat_data(df)
-    shifts_order = ['DS', 'FB', 'GB', 'GL', 'DB', 'SG']
-    curr_pos = (idx * 6) + shifts_order.index(target_s)
-    
-    for p in range(curr_pos - 10, curr_pos + 1):
-        if p < 0: continue
-        d_idx = p // 6
-        s_name = shifts_order[p % 6]
-        h36, h16 = calculate_v50_logic(df, d_idx, s_name)
-        actual = str(df.iloc[d_idx].get(s_name, "XX")).split('.')[0]
-        
+    for i in range(idx - 10, idx + 1):
+        if i < 0: continue
+        h16, h9, _ = calculate_v51(df, i, target_s)
+        actual = str(df.iloc[i].get(target_s, "XX")).split('.')[0]
         status = "❌"
         if actual.isdigit():
             rv = str(int(actual)).zfill(2)
-            if rv in h16: status = "✅ STABLE HIT"
-            elif rv in h36: status = "🟡 BASE HIT"
-            
-        hist.append({"Shift": f"{df.iloc[d_idx]['DATE']} {s_name}", "Result": actual, "Status": status})
-    
+            if rv in h9: status = "💎 DIAMOND"
+            elif rv in h16: status = "✅ HIT"
+        hist.append({"Date": df.iloc[i]['DATE'], "Result": actual, "Status": status})
     st.table(pd.DataFrame(hist))
-    
+                                                      
