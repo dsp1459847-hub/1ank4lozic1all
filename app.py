@@ -178,4 +178,4 @@ if uploaded_file:
             elif rv in h36: status = "🟡 BASE"
         hist_list.append({"Shift": f"{df.iloc[d_idx]['DATE']} {s_name}", "Result": actual, "Status": status})
     st.table(pd.DataFrame(hist_list))
-                                                 
+            
