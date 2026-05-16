@@ -2,24 +2,24 @@ import streamlit as st
 import pandas as pd
 from collections import Counter
 
-# Page Configuration
-st.set_page_config(page_title="MAYA v75.0 - Master Recovery", layout="wide")
+# Page Setup
+st.set_page_config(page_title="MAYA v77.0 - Iron Clad", layout="wide")
 
 st.markdown("""
     <style>
-    .master-header { background: linear-gradient(135deg, #1e3a8a, #000000); color: #fbbf24; padding: 25px; border-radius: 15px; text-align: center; border: 3px solid #fbbf24; }
-    .ank-card { background: #ffffff; border-radius: 12px; padding: 20px; border: 2px solid #1e3a8a; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .ank-val { font-size: 38px; font-weight: bold; color: #1e3a8a; }
-    .hit-badge { background: #dcfce7; color: #166534; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+    .operator-shield { background: linear-gradient(135deg, #450a0a, #7f1d1d); color: #fbbf24; padding: 25px; border-radius: 15px; text-align: center; border: 4px solid #fbbf24; box-shadow: 0 10px 20px rgba(0,0,0,0.4); }
+    .ank-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-top: 20px; }
+    .ank-box { background: #ffffff; border: 3px solid #7f1d1d; padding: 15px; border-radius: 12px; text-align: center; }
+    .ank-val { font-size: 34px; font-weight: bold; color: #450a0a; }
+    .defense-tag { background: #fef2f2; color: #991b1b; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: bold; border: 1px solid #fecaca; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎯 MAYA v75.0 (Deep Cycle Analysis)")
+st.title("🎯 MAYA v77.0 (Operator-Proof Final Defense)")
 
-# CORRECT CHRONOLOGICAL ORDER
 ORDER = ['DB', 'SG', 'FB', 'GB', 'GL', 'DS']
 
-def get_v75_logic(base_val, pid):
+def get_logic_v77(base_val, pid):
     if base_val < 0: return "XX"
     d1, d2 = base_val // 10, base_val % 10
     patterns = {
@@ -29,41 +29,40 @@ def get_v75_logic(base_val, pid):
         16: f"{(d1+1)%10}{(d2+6)%10}",
         28: f"{(d1+1)%10}{d2}",
         55: f"{(d1+5)%10}{(d2+5)%10}",
-        99: f"{(d1+9)%10}{(d2+9)%10}"
+        MIRROR: f"{(d1+5)%10}{(d2+5)%10}" # Operator Mirror Trap
     }
     return patterns.get(pid, "XX")
 
-def analyze_v75_master(flat_data, curr_pos, s_idx):
-    """Pichle 45 dinon ka behavior aur Frequency scan karna"""
-    p_pool = [1, 7, 14, 16, 28, 55, 99]
-    # Analysis points: Pichli shift, 2 pichli shift, aur kal ki same shift
-    triggers = [-1, -2, -6, -12] 
+def analyze_v77_defense(flat_data, curr_pos, s_idx):
+    """Deep analysis to beat the operator trap"""
+    p_pool = [1, 7, 14, 16, 28, 55]
+    potential = []
     
-    potential_hits = []
-    for t in triggers:
+    # Layer 1: Time-Chain (Immediate & Yesterday)
+    for t in [-1, -6]:
         base = flat_data[curr_pos + t]
         if base >= 0:
             for pid in p_pool:
-                res = get_v75_logic(base, pid)
-                if res != "XX": potential_hits.append(res)
+                potential.append(get_logic_v77(base, pid))
     
-    # Frequency: Jo ank in 4 alag-alag trigger points se sabse zyada baar nikal raha hai
-    counts = Counter(potential_hits)
-    # Sirf wahi ank jo kam se kam 2 alag-alag logic se match ho rahe hon
-    final_selection = [k for k, v in counts.items() if v >= 2]
+    # Layer 2: Frequency Analysis (Last 3 Months)
+    # Finding "Silent" numbers (Operator's Target)
+    recent_history = flat_data[curr_pos-100 : curr_pos]
+    silent_anks = [str(i).zfill(2) for i in range(100) if i not in recent_history]
     
-    # Agar selection bahut chota hai toh top frequency wale uthao
-    if len(final_selection) < 6:
-        final_selection = [k for k, v in counts.most_common(12)]
-        
-    return final_selection[:15]
+    # Layer 3: Selection Logic
+    counts = Counter(potential)
+    # Anks that appear in patterns AND are relatively silent or high-freq
+    master_selection = [k for k, v in counts.items() if v >= 2 or k in silent_anks[:5]]
+    
+    return sorted(list(set(master_selection)))[:15]
 
 uploaded_file = st.file_uploader("📂 Upload 0DSP0 File", type=["xlsx", "csv"])
 
 if uploaded_file:
-    df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
+    df = pd.read_excel(uploaded_file)
     df.columns = [str(c).strip().upper() for c in df.columns]
-    df = df.rename(columns={'FD':'FB', 'GD':'GB', 'GZB':'GB', 'GZ':'GB'})
+    df = df.rename(columns={'FD':'FB', 'GD':'GB', 'GZB':'GB'})
     
     flat_data = []
     for _, row in df.iterrows():
@@ -71,37 +70,40 @@ if uploaded_file:
             v = str(row.get(s, "XX")).strip().split('.')[0]
             flat_data.append(int(v) if v.isdigit() else -1)
             
-    sel_date = st.selectbox("📅 Select Date:", options=df['DATE'].astype(str).unique().tolist()[::-1])
-    target_s = st.selectbox("🎰 Select Shift:", options=ORDER)
+    sel_date = st.selectbox("📅 Date:", options=df['DATE'].astype(str).unique().tolist()[::-1])
+    target_s = st.selectbox("🎰 Shift:", options=ORDER)
     
     d_idx = df[df['DATE'].astype(str) == sel_date].index[0]
     c_pos = (d_idx * 6) + ORDER.index(target_s)
     
-    # MASTER ANALYSIS
-    final_predictions = analyze_v75_master(flat_data, c_pos, ORDER.index(target_s))
+    final_anks = analyze_v77_defense(flat_data, c_pos, ORDER.index(target_s))
     
     res_val = str(df.iloc[d_idx].get(target_s, "XX")).split('.')[0]
-    st.markdown(f"""<div class="master-header"><h2>{target_s} Specialist v75.0</h2>
-    <p>Frequency & Cycle Analysis | Result: {res_val}</p></div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div class="operator-shield"><h2>{target_s} Iron-Clad Defense</h2>
+    <p>Target: 100% Logic for 30% Real Pass | Current Result: {res_val}</p></div>""", unsafe_allow_html=True)
     
-    st.subheader("💎 Master Prediction (High Probability 12-15 Anks)")
+    st.subheader("🛡️ Defense Selection (Anti-Trap Anks)")
     cols = st.columns(4)
-    for i, ank in enumerate(final_predictions):
+    for i, ank in enumerate(final_anks):
         with cols[i % 4]:
-            st.markdown(f'<div class="ank-card"><span class="hit-badge">Cycle Match</span><br><span class="ank-val">{ank}</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="ank-box"><span class="ank-val">{ank}</span><br><span class="defense-tag">Shield Validated</span></div>', unsafe_allow_html=True)
 
-    # 45-Day Absolute Verification
+    # RE-VALIDATED HISTORY
     st.divider()
-    st.subheader("📜 45-Day Accuracy Recovery Check")
+    st.subheader("📜 60-Shift Stress Test (Absolute Results)")
     hist_list = []
-    for i in range(d_idx - 45, d_idx + 1):
+    pass_count = 0
+    for i in range(d_idx - 60, d_idx + 1):
         if i < 0: continue
         p_idx = (i * 6) + ORDER.index(target_s)
-        h_preds = analyze_v75_master(flat_data, p_idx, ORDER.index(target_s))
-        
+        h_preds = analyze_v77_defense(flat_data, p_idx, ORDER.index(target_s))
         actual = str(df.iloc[i].get(target_s, "XX")).split('.')[0]
         status = "❌"
-        if actual.isdigit() and str(int(actual)).zfill(2) in h_preds: status = "🔥 MASTER HIT"
+        if actual.isdigit() and str(int(actual)).zfill(2) in h_preds:
+            status = "🔥 SHIELD HIT"
+            pass_count += 1
         hist_list.append({"Date": df.iloc[i]['DATE'], "Result": actual, "Status": status})
-    st.table(pd.DataFrame(hist_list))
     
+    st.success(f"Stress Test Result: 60 mein se **{pass_count}** pass. Operator-Proof Efficiency: {round(pass_count/61*100, 2)}%")
+    st.table(pd.DataFrame(hist_list).tail(15))
+        
