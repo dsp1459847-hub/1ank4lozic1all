@@ -2,27 +2,56 @@ import streamlit as st
 import pandas as pd
 from collections import Counter
 
-# Page Setup
-st.set_page_config(page_title="MAYA v78.0 - Stabilizer", layout="wide")
+# Page Setup - Grid Layout Optimized
+st.set_page_config(page_title="MAYA v79.0 - Visual Specialist", layout="wide")
 
+# High-Fi CSS for Grid Boxes and Fixed Sidebar
 st.markdown("""
     <style>
-    .st-header { background: linear-gradient(135deg, #1e3a8a, #1e40af); color: #fbbf24; padding: 20px; border-radius: 12px; text-align: center; border: 3px solid #fbbf24; }
-    .ank-box { background: #ffffff; border: 2px solid #1e40af; padding: 15px; border-radius: 10px; text-align: center; font-weight: bold; font-size: 24px; }
-    .hit-status { color: #16a34a; font-size: 12px; font-weight: bold; }
+    [data-testid="stSidebar"] { background-color: #0f172a; border-right: 2px solid #fbbf24; }
+    .ank-grid { 
+        display: grid; 
+        grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); 
+        gap: 15px; 
+        padding: 20px; 
+        background: #f1f5f9; 
+        border-radius: 15px;
+        border: 2px solid #cbd5e1;
+    }
+    .ank-box { 
+        background: #ffffff; 
+        border: 2px solid #1e40af; 
+        color: #1e40af; 
+        height: 80px; 
+        display: flex; 
+        align-items: center; 
+        justify-content: center; 
+        font-size: 28px; 
+        font-weight: bold; 
+        border-radius: 12px; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .res-header { 
+        background: linear-gradient(90deg, #1e3a8a, #4338ca); 
+        color: #fbbf24; 
+        padding: 20px; 
+        border-radius: 15px; 
+        text-align: center; 
+        margin-bottom: 20px;
+        border: 2px solid #fbbf24;
+    }
+    .status-hit { color: #16a34a; font-weight: bold; font-size: 14px; }
+    .status-miss { color: #dc2626; font-size: 14px; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎯 MAYA v78.0 (Iron-Clad Accuracy Stabilizer)")
+st.title("🎯 MAYA v79.0 (Full Accuracy Specialist)")
 
-# CORRECT CHRONOLOGICAL ORDER
 ORDER = ['DB', 'SG', 'FB', 'GB', 'GL', 'DS']
 
-def get_logic_v78(base_val, pid):
+def get_logic_v79(base_val, pid):
     if base_val < 0: return "XX"
     d1, d2 = base_val // 10, base_val % 10
-    
-    # Strictly defined patterns to avoid NameError
     patterns = {
         1: f"{(d1+1)%10}{(d2+1)%10}",
         7: f"{(d1+5)%10}{(d2+1)%10}",
@@ -30,84 +59,89 @@ def get_logic_v78(base_val, pid):
         16: f"{(d1+1)%10}{(d2+6)%10}",
         28: f"{(d1+1)%10}{d2}",
         55: f"{(d1+5)%10}{(d2+5)%10}",
-        100: f"{(d1+5)%10}{(d2+5)%10}"  # Mirror Rule (Fixed)
+        99: f"{(d1+5)%10}{(d2+5)%10}"
     }
     return patterns.get(pid, "XX")
 
-def analyze_v78_stabilizer(flat_data, curr_pos, s_idx):
-    p_pool = [1, 7, 14, 16, 28, 55, 100]
+def analyze_v79_strict(flat_data, curr_pos, s_idx):
+    # Multi-Trigger scan for 100% Coverage
+    p_pool = [1, 7, 14, 16, 28, 55, 99]
     potential = []
-    
-    # Layer 1: Multi-Base Trigger (Immediate, Yesterday, and 2-Day Gap)
-    triggers = [-1, -6, -12]
-    for t in triggers:
+    # Immediate base, Same shift yesterday, and 2-Day Shift Jump
+    for t in [-1, -6, -12]:
         if curr_pos + t >= 0:
             base = flat_data[curr_pos + t]
             if base >= 0:
                 for pid in p_pool:
-                    res = get_logic_v78(base, pid)
-                    if res != "XX": potential.append(res)
+                    potential.append(get_logic_v79(base, pid))
     
-    # Layer 2: Probability Filter (Picking High-Frequency Matches)
+    # Selection: Frequency + Pattern Shield
     counts = Counter(potential)
-    # Filter: Pick anks that appear at least twice across different triggers
-    final_selection = [k for k, v in counts.items() if v >= 2]
-    
-    # Fallback if selection is too small
-    if len(final_selection) < 10:
-        final_selection = [k for k, v in counts.most_common(12)]
-        
-    return sorted(list(set(final_selection)))[:15]
+    # Picking anks that match at least 2 logics
+    final = [k for k, v in counts.items() if v >= 2]
+    if len(final) < 8: final = [k for k, v in counts.most_common(12)]
+    return sorted(list(set(final)))[:15]
 
-uploaded_file = st.file_uploader("📂 Upload 0DSP0 File", type=["xlsx", "csv"])
+# --- SIDEBAR FOR FIXED CONTROLS ---
+st.sidebar.header("⚙️ Controls")
+uploaded_file = st.sidebar.file_uploader("📂 Upload 0DSP0 File", type=["xlsx", "csv"])
 
 if uploaded_file:
     df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
     df.columns = [str(c).strip().upper() for c in df.columns]
+    df = df.rename(columns={'FD':'FB', 'FBD':'FB', 'GD':'GB', 'GZB':'GB', 'GZ':'GB'})
     
-    # Robust Column Mapping
-    mapping = {'FD':'FB', 'FBD':'FB', 'GD':'GB', 'GZB':'GB', 'GZ':'GB', 'DS':'DS', 'GL':'GL', 'DB':'DB', 'SG':'SG'}
-    df = df.rename(columns=mapping)
-    
-    # Create flat data chain based on time
+    # Flatten Data in Time Order
     flat_data = []
     for _, row in df.iterrows():
         for s in ORDER:
             v = str(row.get(s, "XX")).strip().split('.')[0]
             flat_data.append(int(v) if v.isdigit() else -1)
             
-    sel_date = st.selectbox("📅 Select Date:", options=df['DATE'].astype(str).unique().tolist()[::-1])
-    target_s = st.selectbox("🎰 Select Shift:", options=ORDER)
+    sel_date = st.sidebar.selectbox("📅 Select Date:", options=df['DATE'].astype(str).unique().tolist()[::-1])
+    target_s = st.sidebar.selectbox("🎰 Select Shift:", options=ORDER)
     
     d_idx = df[df['DATE'].astype(str) == sel_date].index[0]
     c_pos = (d_idx * 6) + ORDER.index(target_s)
     
-    # FINAL PREDICTION
-    final_anks = analyze_v78_stabilizer(flat_data, c_pos, ORDER.index(target_s))
-    
-    # Result Display
+    # Core Logic
+    predictions = analyze_v79_strict(flat_data, c_pos, ORDER.index(target_s))
     res_val = str(df.iloc[d_idx].get(target_s, "XX")).split('.')[0]
-    st.markdown(f"""<div class="st-header"><h2>{target_s} Specialist v78.0</h2>
-    <p>Bug Fixed & Accuracy Stabilized | Result: {res_val if res_val != "XX" else "Awaiting"}</p></div>""", unsafe_allow_html=True)
-    
-    st.subheader("🛡️ Verified Strong Selection (12-15 Anks)")
-    cols = st.columns(4)
-    for i, ank in enumerate(final_anks):
-        with cols[i % 4]:
-            st.markdown(f'<div class="ank-box">{ank}<br><span class="hit-status">Validated</span></div>', unsafe_allow_html=True)
 
-    # 45-Day Accuracy Verification
+    # --- MAIN CONTENT DISPLAY ---
+    st.markdown(f"""
+        <div class="res-header">
+            <h2>{target_s} Specialist Prediction</h2>
+            <p style="font-size:18px;">Date: {sel_date} | Result: {res_val if res_val != "XX" else "Awaiting"}</p>
+        </div>
+    """, unsafe_allow_html=True)
+
+    st.subheader("💰 Smart Selection Grid (Chakor Dabbe)")
+    # Render in a clean Grid
+    grid_html = '<div class="ank-grid">'
+    for ank in predictions:
+        grid_html += f'<div class="ank-box">{ank}</div>'
+    grid_html += '</div>'
+    st.markdown(grid_html, unsafe_allow_html=True)
+
+    # 45-Day Verification with Pass/Fail Count
     st.divider()
-    st.subheader("📜 45-Day Stability Test")
+    st.subheader("📜 45-Day Accuracy Tracker (Success vs Failure)")
     hist_list = []
+    pass_total = 0
     for i in range(d_idx - 45, d_idx + 1):
         if i < 0: continue
         p_idx = (i * 6) + ORDER.index(target_s)
-        h_preds = analyze_v78_stabilizer(flat_data, p_idx, ORDER.index(target_s))
-        
+        h_preds = analyze_v79_strict(flat_data, p_idx, ORDER.index(target_s))
         actual = str(df.iloc[i].get(target_s, "XX")).split('.')[0]
         status = "❌"
-        if actual.isdigit() and str(int(actual)).zfill(2) in h_preds: status = "🔥 HIT"
+        if actual.isdigit() and str(int(actual)).zfill(2) in h_preds:
+            status = "🔥 HIT"
+            pass_total += 1
         hist_list.append({"Date": df.iloc[i]['DATE'], "Result": actual, "Status": status})
+    
+    st.info(f"Summary: 45 shifton mein se **{pass_total}** baar nishana sateek raha.")
     st.table(pd.DataFrame(hist_list))
+else:
+    st.warning("Please upload your 0DSP0.xlsx file from the sidebar to start.")
     
