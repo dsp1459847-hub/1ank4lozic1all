@@ -2,12 +2,12 @@ import streamlit as st
 import pandas as pd
 from collections import Counter
 
-# Page Configuration - Grid & Sidebar Optimized
-st.set_page_config(page_title="MAYA v80.0 - Quad Recovery", layout="wide")
+# Page Setup - Sidebar and Grid optimization
+st.set_page_config(page_title="MAYA v81.0 - Pattern Decoder", layout="wide")
 
 st.markdown("""
     <style>
-    [data-testid="stSidebar"] { background-color: #0f172a; border-right: 3px solid #fbbf24; }
+    [data-testid="stSidebar"] { background-color: #0f172a; border-right: 2px solid #fbbf24; color: white; }
     .st-res-header { 
         background: linear-gradient(90deg, #1e3a8a, #1e40af); 
         color: #fbbf24; padding: 25px; border-radius: 15px; 
@@ -22,16 +22,16 @@ st.markdown("""
         height: 80px; display: flex; align-items: center; justify-content: center; 
         font-size: 32px; font-weight: bold; border-radius: 12px;
     }
-    .hit-tag { color: #16a34a; font-weight: bold; }
+    .status-tag { color: #16a34a; font-weight: bold; font-size: 14px; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎯 MAYA v80.0 (The 4-Shift Success Engine)")
+st.title("🎯 MAYA v81.0 (Pattern-Shift Decoder)")
 
-# STRICT TIME ORDER
+# TIME-SYNCHRONIZED ORDER
 ORDER = ['DB', 'SG', 'FB', 'GB', 'GL', 'DS']
 
-def get_logic_v80(base_val, pid):
+def get_pattern_logic(base_val, pid):
     if base_val < 0: return "XX"
     d1, d2 = base_val // 10, base_val % 10
     patterns = {
@@ -41,39 +41,47 @@ def get_logic_v80(base_val, pid):
         16: f"{(d1+1)%10}{(d2+6)%10}",
         28: f"{(d1+1)%10}{d2}",
         55: f"{(d1+5)%10}{(d2+5)%10}",
-        100: f"{(d1+5)%10}{(d2+5)%10}" # Fixed Mirror
+        99: f"{(d1+5)%10}{(d2+5)%10}" # Mirror Trap
     }
     return patterns.get(pid, "XX")
 
-def analyze_v80_recovery(flat_data, curr_pos, s_idx):
-    p_pool = [1, 7, 14, 16, 28, 55, 100]
+def analyze_dynamic_shift(flat_data, curr_pos, s_idx):
+    """Detects which pattern the operator is currently using for THIS shift"""
+    p_pool = [1, 7, 14, 16, 28, 55, 99]
+    active_patterns = {p: 0 for p in p_pool}
+    
+    # Scan recent 30 shifts (approx 5 days) to find the 'LIVE' pattern
+    for i in range(curr_pos - 30, curr_pos):
+        if (i % 6) == s_idx and i >= 6:
+            actual = str(flat_data[i]).zfill(2)
+            # Check which base/pattern combination actually worked recently
+            for base_offset in [-1, -6, -12]:
+                base = flat_data[i + base_offset]
+                if base >= 0:
+                    for pid in p_pool:
+                        if get_pattern_logic(base, pid) == actual:
+                            active_patterns[pid] += 2 # Higher weight to recent success
+                            
+    # Pick top 3 patterns that worked in the last 5 days
+    best_pids = sorted(active_patterns, key=active_patterns.get, reverse=True)[:3]
+    return best_pids
+
+def generate_v81_prediction(flat_data, curr_pos, s_idx):
+    best_pids = analyze_dynamic_shift(flat_data, curr_pos, s_idx)
     potential = []
     
-    # Adaptive Trigger: For weak shifts, we scan deeper history
-    # 1. Immediate Base | 2. Same Shift Yesterday | 3. Same Shift Day Before Yesterday
-    triggers = [-1, -6, -12]
+    # Apply these LIVE patterns to current triggers
+    for t in [-1, -6, -12]:
+        base = flat_data[curr_pos + t]
+        if base >= 0:
+            for pid in best_pids:
+                res = get_pattern_logic(base, pid)
+                if res != "XX": potential.append(res)
     
-    for t in triggers:
-        if curr_pos + t >= 0:
-            base = flat_data[curr_pos + t]
-            if base >= 0:
-                for pid in p_pool:
-                    res = get_logic_v80(base, pid)
-                    if res != "XX": potential.append(res)
-    
-    counts = Counter(potential)
-    # Selection: Anks that match at least 2 different time-triggers
-    final = [k for k, v in counts.items() if v >= 2]
-    
-    # If recovery is weak, fallback to top probability
-    if len(final) < 8:
-        final = [k for k, v in counts.most_common(12)]
-        
-    return sorted(list(set(final)))[:15]
+    return sorted(list(set(potential)))[:15]
 
-# --- SIDEBAR CONTROLS ---
-st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1532/1532514.png", width=100)
-st.sidebar.header("⚙️ Final Settings")
+# --- SIDEBAR FOR FIXED SELECTION ---
+st.sidebar.header("⚙️ Dynamic Settings")
 uploaded_file = st.sidebar.file_uploader("📂 Upload 0DSP0 File", type=["xlsx", "csv"])
 
 if uploaded_file:
@@ -81,7 +89,6 @@ if uploaded_file:
     df.columns = [str(c).strip().upper() for c in df.columns]
     df = df.rename(columns={'FD':'FB', 'FBD':'FB', 'GD':'GB', 'GZB':'GB', 'GZ':'GB'})
     
-    # Chronological Data Link
     flat_data = []
     for _, row in df.iterrows():
         for s in ORDER:
@@ -95,42 +102,38 @@ if uploaded_file:
     c_pos = (d_idx * 6) + ORDER.index(target_s)
     
     # Run Logic
-    final_predictions = analyze_v80_recovery(flat_data, c_pos, ORDER.index(target_s))
+    final_anks = generate_v81_prediction(flat_data, c_pos, ORDER.index(target_s))
     res_val = str(df.iloc[d_idx].get(target_s, "XX")).split('.')[0]
 
-    # --- MAIN UI DISPLAY ---
+    # --- MAIN UI ---
     st.markdown(f"""
         <div class="st-res-header">
-            <h1>{target_s} Specialist Prediction</h1>
-            <p style="font-size:18px;">4-Shift Recovery Mode Active | Date: {sel_date} | Result: {res_val}</p>
+            <h1>{target_s} Dynamic Prediction</h1>
+            <p style="font-size:18px;">Operator Pattern Switcher Active | Date: {sel_date} | Result: {res_val}</p>
         </div>
     """, unsafe_allow_html=True)
 
-    st.subheader("💰 Strong Prediction Grid (Chakor Dabbe)")
+    st.subheader("💰 Live Pattern Selection (Chakor Dabbe)")
     grid_html = '<div class="ank-grid">'
-    for ank in final_predictions:
+    for ank in final_anks:
         grid_html += f'<div class="ank-box">{ank}</div>'
     grid_html += '</div>'
     st.markdown(grid_html, unsafe_allow_html=True)
 
-    # 45-Day Accuracy Tracker
+    # Historical Accuracy Proof
     st.divider()
-    st.subheader(f"📜 45-Day Accuracy Proof ({target_s})")
+    st.subheader(f"📜 Accuracy Backtest (Detecting Pattern Shifts)")
     hist_list = []
-    pass_total = 0
     for i in range(d_idx - 45, d_idx + 1):
         if i < 0: continue
         p_idx = (i * 6) + ORDER.index(target_s)
-        h_preds = analyze_v80_recovery(flat_data, p_idx, ORDER.index(target_s))
+        h_preds = generate_v81_prediction(flat_data, p_idx, ORDER.index(target_s))
         actual = str(df.iloc[i].get(target_s, "XX")).split('.')[0]
         status = "❌"
-        if actual.isdigit() and str(int(actual)).zfill(2) in h_preds:
-            status = "✅ HIT"
-            pass_total += 1
+        if actual.isdigit() and str(int(actual)).zfill(2) in h_preds: status = "✅ HIT"
         hist_list.append({"Date": df.iloc[i]['DATE'], "Result": actual, "Status": status})
     
-    st.success(f"Recovery Analysis: 45 shifton mein se **{pass_total}** baar nishana sahi laga.")
     st.table(pd.DataFrame(hist_list))
 else:
-    st.warning("Please upload your 0DSP0.xlsx file from the sidebar to activate the recovery logic.")
+    st.warning("Sidebar se 0DSP0.xlsx file upload karein.")
     
