@@ -34,12 +34,10 @@ def load_excel(uploaded_file):
             rename_map[c] = c
 
     df = df.rename(columns=rename_map)
-
     if "DATE" not in df.columns:
         raise ValueError("DATE column not found.")
 
     df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce")
-
     for c in SHIFT_COLS:
         if c not in df.columns:
             df[c] = np.nan
@@ -48,52 +46,70 @@ def load_excel(uploaded_file):
     df = df.dropna(subset=["DATE"]).sort_values("DATE").reset_index(drop=True)
     return df
 
-def build_rule_bank(train_df, target_shift, min_support=10):
-    rules = []
-    feat_cols = [c for c in SHIFT_COLS if c != target_shift]
+def recent_weight(i, n):
+    return 1.0 + 2.5 * (i / max(n - 1, 1))
 
-    for feat in feat_cols:
+def train_pair_patterns(train_df, target_shift, min_support=8, recent_boost=True):
+    feats = [c for c in SHIFT_COLS if c != target_shift]
+    rule_map = []
+    for feat in feats:
         tmp = train_df[[feat, target_shift]].dropna().copy()
         if tmp.empty:
             continue
         tmp[feat] = tmp[feat].astype(int)
         tmp[target_shift] = tmp[target_shift].astype(int)
 
-        grp = tmp.groupby(feat)[target_shift].agg(["count", lambda x: x.value_counts().idxmax(), lambda x: x.value_counts().max()])
-        grp.columns = ["support", "pred", "hits"]
-        grp["prob"] = grp["hits"] / grp["support"]
-        grp = grp[grp["support"] >= min_support].reset_index()
+        agg = defaultdict(lambda: Counter())
+        for idx, row in tmp.reset_index(drop=True).iterrows():
+            w = recent_weight(idx, len(tmp)) if recent_boost else 1.0
+            agg[int(row[feat])][int(row[target_shift])] += w
 
-        for _, r in grp.iterrows():
-            rules.append({
+        for cond, ctr in agg.items():
+            total = sum(ctr.values())
+            if total < min_support:
+                continue
+            pred, score = ctr.most_common(1)[0]
+            prob = score / total if total else 0
+            rule_map.append({
                 "feat": feat,
-                "cond": int(r[feat]),
-                "pred": int(r["pred"]),
-                "support": int(r["support"]),
-                "prob": float(r["prob"])
+                "cond": int(cond),
+                "pred": int(pred),
+                "support": float(total),
+                "prob": float(prob),
+                "score": float(score)
             })
+    return pd.DataFrame(rule_map)
 
-    return pd.DataFrame(rules)
-
-def predict_next(train_df, row, target_shift, min_support=10):
-    bank = build_rule_bank(train_df, target_shift, min_support=min_support)
+def predict_row(train_df, row, target_shift, min_support=8, threshold=0.15):
+    bank = train_pair_patterns(train_df, target_shift, min_support=min_support, recent_boost=True)
     if bank.empty:
         return np.nan, 0.0, "No rule"
 
-    cand = bank[bank["cond"].isin([int(row[c]) for c in SHIFT_COLS if c != target_shift and pd.notna(row.get(c))])].copy()
-    if cand.empty:
+    votes = defaultdict(float)
+    source = defaultdict(list)
+
+    for feat in [c for c in SHIFT_COLS if c != target_shift]:
+        val = row.get(feat)
+        if pd.isna(val):
+            continue
+        hit = bank[(bank["feat"] == feat) & (bank["cond"] == int(val))]
+        if hit.empty:
+            continue
+        r = hit.iloc[0]
+        if r["prob"] < threshold:
+            continue
+        weight = r["support"] * r["prob"] * (1.15 if feat in ["DS", "FD"] else 1.0)
+        votes[int(r["pred"])] += weight
+        source[int(r["pred"])].append(f"{feat}={int(val)}")
+
+    if not votes:
         return np.nan, 0.0, "No match"
 
-    cand["weight"] = cand["support"] * cand["prob"]
-    score = cand.groupby("pred")["weight"].sum().sort_values(ascending=False)
-
-    pred = int(score.index[0])
-    conf = float(score.iloc[0] / score.sum()) if score.sum() > 0 else 0.0
-
-    top_rules = cand[cand["pred"] == pred].sort_values(["weight", "prob", "support"], ascending=False)
-    src = ", ".join(top_rules["feat"].head(3).tolist())
-
-    return pred, conf, src
+    pred = max(votes, key=votes.get)
+    total = sum(votes.values())
+    conf = votes[pred] / total if total > 0 else 0.0
+    src = "; ".join(source[pred][:3])
+    return pred, float(conf), src
 
 def mark_symbol(actual, pred):
     if pd.isna(actual) or pd.isna(pred):
@@ -113,8 +129,8 @@ try:
 
     with st.sidebar:
         target_shift = st.selectbox("Target shift", SHIFT_COLS, index=0)
-        min_support = st.slider("Min support", 3, 50, 10)
-        mode = st.selectbox("Mode", ["Select cutoff date", "Latest date"], index=0)
+        min_support = st.slider("Min support", 3, 50, 8)
+        threshold = st.slider("Match threshold", 0.05, 0.60, 0.15, 0.01)
 
     valid_dates = sorted(df["DATE"].dropna().dt.date.unique().tolist())
     if len(valid_dates) < 2:
@@ -123,7 +139,7 @@ try:
 
     cutoff_date = st.date_input(
         "Cutoff date चुनें",
-        value=valid_dates[-2] if mode == "Select cutoff date" else valid_dates[-2],
+        value=valid_dates[-2],
         min_value=valid_dates[0],
         max_value=valid_dates[-2]
     )
@@ -142,7 +158,7 @@ try:
     next_row = df.iloc[cutoff_idx + 1]
     next_date = next_row["DATE"].date()
 
-    pred, conf, src = predict_next(train_df, next_row, target_shift, min_support=min_support)
+    pred, conf, src = predict_row(train_df, next_row, target_shift, min_support=min_support, threshold=threshold)
 
     st.subheader("Prediction")
     c1, c2, c3 = st.columns(3)
@@ -159,7 +175,7 @@ try:
     for i in range(start_idx, len(df) - 1):
         tr = df.iloc[:i + 1].copy()
         actual_row = df.iloc[i + 1]
-        p, c, s = predict_next(tr, actual_row, target_shift, min_support=min_support)
+        p, c, s = predict_row(tr, actual_row, target_shift, min_support=min_support, threshold=threshold)
         rows.append({
             "CUTOFF_DATE": df.iloc[i]["DATE"].date(),
             "PRED_FOR": actual_row["DATE"].date(),
@@ -172,8 +188,9 @@ try:
     hist = pd.DataFrame(rows).tail(20)
     st.dataframe(hist, use_container_width=True)
 
-    acc = (hist["RESULT"] == "✅").mean() * 100 if not hist.empty else 0
-    st.metric("Backtest Accuracy", f"{acc:.2f}%")
+    if not hist.empty:
+        acc = (hist["RESULT"] == "✅").mean() * 100
+        st.metric("Backtest Accuracy", f"{acc:.2f}%")
 
 except Exception as e:
     st.error(f"Error: {e}")
