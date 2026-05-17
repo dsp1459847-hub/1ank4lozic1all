@@ -1,227 +1,118 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from collections import Counter, defaultdict
+from datetime import datetime
 
-st.set_page_config(page_title="Excel History Predictor", layout="wide")
+# साधारण पेज सेटिंग
+st.set_page_config(page_title="Shift Prediction Engine", layout="wide")
 
-SHIFT_COLS = ["DS", "FD", "GD", "GL", "DB", "SG", "ZA"]
+st.title("Shift Prediction Engine")
+st.write("Dream Light & Gate of Night Systems")
+st.markdown("---")
 
-def to_num(x):
-    if pd.isna(x):
-        return np.nan
-    s = str(x).strip().upper()
-    if s in ["XX", "X", "", "NAN", "NONE", "-"]:
-        return np.nan
-    try:
-        return int(float(s))
-    except:
-        return np.nan
-
+# 1. डेटा लोड करने का फंक्शन
 @st.cache_data
-def load_data(file):
-    df = pd.read_excel(file)
-    df.columns = [str(c).strip().upper().replace(".", "").replace(" ", "_") for c in df.columns]
-    if "DATE" not in df.columns:
-        raise ValueError("DATE column not found")
+def load_and_clean_data(file):
+    try:
+        df = pd.read_excel(file)
+        df.iloc[:, 0] = pd.to_datetime(df.iloc[:, 0], errors='coerce')
+        df.rename(columns={df.columns[0]: 'Date'}, inplace=True)
+        
+        shift_cols = df.columns[2:]
+        for col in shift_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        return df, shift_cols
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+        return None, None
 
-    df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce")
-    for c in SHIFT_COLS:
-        if c not in df.columns:
-            df[c] = np.nan
-        df[c] = df[c].apply(to_num)
+# 2. प्रेडिक्शन कैलकुलेटर कोर लॉजिक
+def calculate_predictions(df, shift_cols, target_date_idx):
+    history_df = df.iloc[:target_date_idx]
+    current_day_data = df.iloc[target_date_idx]
+    
+    if len(history_df) < 5:
+        return None
+        
+    predictions = {}
+    
+    for target_shift in shift_cols:
+        score_card = np.zeros(100)
+        
+        # पैटर्न 1: क्रॉस-शिफ्ट संबंध
+        for other_shift in shift_cols:
+            if target_shift != other_shift:
+                today_val = current_day_data[other_shift]
+                if not np.isnan(today_val):
+                    matches = history_df[history_df[other_shift] == today_val][target_shift].dropna()
+                    for val in matches:
+                        score_card[int(val)] += 2.5
 
-    df = df.dropna(subset=["DATE"]).sort_values("DATE").reset_index(drop=True)
-    return df
+        # पैटर्न 2: डे-टू-डे लैग संबंध
+        prev_day_data = history_df.iloc[-1]
+        prev_val = prev_day_data[target_shift]
+        if not np.isnan(prev_val):
+            for i in range(len(history_df) - 1):
+                if history_df.iloc[i][target_shift] == prev_val:
+                    next_val = history_df.iloc[i+1][target_shift]
+                    if not np.isnan(next_val):
+                        score_card[int(next_val)] += 4.0
 
-def build_features(df, idx, target):
-    row = df.iloc[idx]
-    feats = []
+        total_score = np.sum(score_card)
+        if total_score == 0:
+            recent_numbers = history_df[target_shift].tail(15).dropna().astype(int).tolist()
+            if recent_numbers:
+                for num in recent_numbers:
+                    score_card[num] += 1
+            total_score = np.sum(score_card)
 
-    if idx - 1 >= 0:
-        prev = df.iloc[idx - 1]
-        for c in SHIFT_COLS:
-            if c != target and pd.notna(prev[c]):
-                feats.append((f"L1_{c}", int(prev[c])))
+        top_indices = np.argsort(score_card)[::-1]
+        highest_score = score_card[top_indices[0]]
+        confidence_pct = round((highest_score / total_score) * 100, 2) if total_score > 0 else 0.0
 
-    if idx - 2 >= 0:
-        prev2 = df.iloc[idx - 2]
-        for c in SHIFT_COLS:
-            if c != target and pd.notna(prev2[c]):
-                feats.append((f"L2_{c}", int(prev2[c])))
+        predictions[target_shift] = {
+            "Single_Ank": f"{top_indices[0]:02d}",
+            "Top_10_Support": [f"{x:02d}" for x in top_indices[1:11]],
+            "Confidence_Score": f"{confidence_pct}%"
+        }
+    return predictions
 
-    if idx - 7 >= 0:
-        prev7 = df.iloc[idx - 7]
-        if pd.notna(prev7[target]):
-            feats.append(("L7_SELF", int(prev7[target])))
+# --- यूजर इंटरफेस (Plain UI) ---
 
-    feats.append(("WEEKDAY", int(row["DATE"].weekday())))
-    feats.append(("MONTHDAY", int(row["DATE"].day)))
+st.sidebar.subheader("Upload Data")
+uploaded_file = st.sidebar.file_uploader("Upload 0DSP0.xlsx", type=["xlsx"])
 
-    return feats
-
-def train_rule_bank(train_df, target, min_support=5):
-    rules = defaultdict(Counter)
-
-    for i in range(2, len(train_df)):
-        actual = train_df.iloc[i][target]
-        if pd.isna(actual):
-            continue
-        actual = int(actual)
-        feats = build_features(train_df, i, target)
-        for f in feats:
-            rules[f][actual] += 1
-
-    rows = []
-    for key, ctr in rules.items():
-        support = sum(ctr.values())
-        if support < min_support:
-            continue
-        pred, hit = ctr.most_common(1)[0]
-        prob = hit / support
-        rows.append({
-            "feature": key[0],
-            "value": key[1],
-            "pred": int(pred),
-            "support": int(support),
-            "hits": int(hit),
-            "prob": round(prob, 4)
-        })
-
-    out = pd.DataFrame(rows)
-    if not out.empty:
-        out = out.sort_values(["prob", "support"], ascending=False).reset_index(drop=True)
-    return out
-
-def predict_with_rules(train_df, current_row, target, rules_df):
-    votes = defaultdict(float)
-    feats = []
-
-    if len(train_df) >= 1:
-        prev = train_df.iloc[-1]
-        for c in SHIFT_COLS:
-            if c != target and pd.notna(prev[c]):
-                feats.append((f"L1_{c}", int(prev[c])))
-
-    if len(train_df) >= 2:
-        prev2 = train_df.iloc[-2]
-        for c in SHIFT_COLS:
-            if c != target and pd.notna(prev2[c]):
-                feats.append((f"L2_{c}", int(prev2[c])))
-
-    if len(train_df) >= 7:
-        prev7 = train_df.iloc[-7]
-        if pd.notna(prev7[target]):
-            feats.append(("L7_SELF", int(prev7[target])))
-
-    feats.append(("WEEKDAY", int(current_row["DATE"].weekday())))
-    feats.append(("MONTHDAY", int(current_row["DATE"].day)))
-
-    used = []
-    for f, v in feats:
-        hit = rules_df[(rules_df["feature"] == f) & (rules_df["value"] == v)]
-        if hit.empty:
-            continue
-        for _, r in hit.iterrows():
-            w = r["support"] * r["prob"]
-            if f.startswith("L1_"):
-                w *= 1.4
-            elif f.startswith("L2_"):
-                w *= 1.2
-            elif f == "L7_SELF":
-                w *= 1.6
-            elif f in ["WEEKDAY", "MONTHDAY"]:
-                w *= 1.05
-            votes[int(r["pred"])] += w
-            used.append(f"{f}={v} -> {int(r['pred'])}")
-
-    if not votes:
-        return [], np.nan, 0.0, "No matching rule"
-
-    ranked = sorted(votes.items(), key=lambda x: x[1], reverse=True)
-    total = sum(votes.values())
-    top1 = ranked[0][0]
-    conf = ranked[0][1] / total if total > 0 else 0.0
-    top10 = [n for n, _ in ranked[:10]]
-    return top10, int(top1), round(conf, 4), "; ".join(used[:8])
-
-def backtest(df, target, window=180, min_support=5):
-    rows = []
-    start = max(10, len(df) - window - 1)
-
-    for i in range(start, len(df) - 1):
-        train = df.iloc[:i+1].copy()
-        if len(train) > window:
-            train = train.iloc[-window:].copy()
-
-        rules = train_rule_bank(train, target, min_support=min_support)
-        current_row = df.iloc[i+1]
-        top10, top1, conf, src = predict_with_rules(train, current_row, target, rules)
-        actual = current_row[target]
-
-        hit1 = int(pd.notna(actual) and top1 == int(actual))
-        hit10 = int(pd.notna(actual) and int(actual) in top10)
-
-        rows.append({
-            "train_till": train.iloc[-1]["DATE"].date(),
-            "predict_for": current_row["DATE"].date(),
-            "actual": None if pd.isna(actual) else int(actual),
-            "top1": top1,
-            "top10": top10,
-            "conf": conf,
-            "hit_top1": hit1,
-            "hit_top10": hit10,
-            "source": src
-        })
-
-    res = pd.DataFrame(rows)
-    return res
-
-st.title("Excel History Predictor")
-
-uploaded = st.file_uploader("Upload Excel file", type=["xlsx"])
-if uploaded is None:
-    st.stop()
-
-df = load_data(uploaded)
-
-with st.sidebar:
-    target = st.selectbox("Target shift", SHIFT_COLS, index=0)
-    window = st.slider("Rolling history window", 30, 1000, 180)
-    min_support = st.slider("Min rule support", 2, 30, 5)
-
-st.write("Loaded rows:", len(df))
-st.write(df.head(10))
-
-rules = train_rule_bank(df, target, min_support=min_support)
-st.subheader(f"Top rules for {target}")
-st.dataframe(rules.head(50), use_container_width=True)
-
-bt = backtest(df, target, window=window, min_support=min_support)
-st.subheader("Backtest results")
-st.dataframe(bt.tail(30), use_container_width=True)
-
-if not bt.empty:
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Top1 Accuracy", f"{bt['hit_top1'].mean()*100:.2f}%")
-    col2.metric("Top10 Hit Rate", f"{bt['hit_top10'].mean()*100:.2f}%")
-    col3.metric("Tests", f"{len(bt)}")
-
-st.subheader("Next day prediction")
-latest_train = df.copy()
-if len(latest_train) > window:
-    latest_train = latest_train.iloc[-window:].copy()
-
-latest_rules = train_rule_bank(latest_train, target, min_support=min_support)
-next_date = latest_train.iloc[-1]["DATE"] + pd.Timedelta(days=1)
-next_row = pd.DataFrame([{"DATE": next_date}])
-top10, top1, conf, src = predict_with_rules(latest_train, next_row.iloc[0], target, latest_rules)
-
-st.write("Top 1:", top1)
-st.write("Confidence:", conf)
-st.write("Top 10:", top10)
-st.write("Rule source:", src)
-
-if top10:
-    st.success(f"Best prediction for {target}: {top1}")
-    st.info(f"Top 10 candidates: {top10}")
+if uploaded_file is not None:
+    df, shift_cols = load_and_clean_data(uploaded_file)
+    
+    if df is not None:
+        st.sidebar.success("File Loaded.")
+        
+        st.sidebar.subheader("Select Date")
+        available_dates = df['Date'].dropna().dt.date.unique()
+        selected_date = st.sidebar.selectbox("Choose Date", sorted(available_dates, reverse=True))
+        
+        matching_rows = df[df['Date'].dt.date == selected_date]
+        if not matching_rows.empty:
+            idx = matching_rows.index[0]
+            results = calculate_predictions(df, shift_cols, idx)
+            
+            if results:
+                st.write(f"### Date: {selected_date.strftime('%d-%m-%Y')}")
+                st.markdown("---")
+                
+                # बिना किसी कलर या थीम के साधारण टेबल/कॉलम व्यू
+                cols = st.columns(len(shift_cols))
+                for i, shift in enumerate(shift_cols):
+                    with cols[i]:
+                        st.text(f"Shift: {shift}")
+                        st.text(f"Confidence: {results[shift]['Confidence_Score']}")
+                        st.metric(label="Single Ank", value=results[shift]['Single_Ank'])
+                        st.text("Support:")
+                        st.write(", ".join(results[shift]['Top_10_Support']))
+                        st.markdown("---")
+            else:
+                st.warning("Not enough history data for this date.")
+else:
+    st.info("Please upload your Excel file from the sidebar to start.")
+    
