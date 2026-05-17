@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
 
 st.set_page_config(page_title="Shift Predictor Lite", layout="wide")
 
@@ -22,8 +22,8 @@ def clean_num(x):
 def load_excel(uploaded_file):
     xls = pd.ExcelFile(uploaded_file)
     df = pd.read_excel(uploaded_file, sheet_name=xls.sheet_names[0])
-
     df.columns = [str(c).strip().upper().replace(".", "").replace(" ", "_") for c in df.columns]
+
     rename_map = {}
     for c in df.columns:
         if c in ["S_NUMBER", "SNUMBER", "S_NUMBER_"]:
@@ -32,6 +32,7 @@ def load_excel(uploaded_file):
             rename_map[c] = "DATE"
         elif c in SHIFT_COLS:
             rename_map[c] = c
+
     df = df.rename(columns=rename_map)
 
     if "DATE" not in df.columns:
@@ -47,63 +48,52 @@ def load_excel(uploaded_file):
     df = df.dropna(subset=["DATE"]).sort_values("DATE").reset_index(drop=True)
     return df
 
-def shift_rules(train_df, target_shift, feature_shift, min_support=8):
-    if feature_shift not in train_df.columns or target_shift not in train_df.columns:
-        return pd.DataFrame(columns=["cond", "pred", "support", "prob"])
+def build_rule_bank(train_df, target_shift, min_support=10):
+    rules = []
+    feat_cols = [c for c in SHIFT_COLS if c != target_shift]
 
-    data = train_df[[feature_shift, target_shift]].dropna().copy()
-    if data.empty:
-        return pd.DataFrame(columns=["cond", "pred", "support", "prob"])
-
-    data[feature_shift] = data[feature_shift].astype(int)
-    data[target_shift] = data[target_shift].astype(int)
-
-    counts = defaultdict(Counter)
-    for a, b in zip(data[feature_shift], data[target_shift]):
-        counts[a][b] += 1
-
-    rows = []
-    for cond_val, ctr in counts.items():
-        total = sum(ctr.values())
-        if total < min_support:
+    for feat in feat_cols:
+        tmp = train_df[[feat, target_shift]].dropna().copy()
+        if tmp.empty:
             continue
-        pred, sup = ctr.most_common(1)[0]
-        rows.append({
-            "cond": int(cond_val),
-            "pred": int(pred),
-            "support": int(total),
-            "prob": float(sup / total)
-        })
+        tmp[feat] = tmp[feat].astype(int)
+        tmp[target_shift] = tmp[target_shift].astype(int)
 
-    if not rows:
-        return pd.DataFrame(columns=["cond", "pred", "support", "prob"])
+        grp = tmp.groupby(feat)[target_shift].agg(["count", lambda x: x.value_counts().idxmax(), lambda x: x.value_counts().max()])
+        grp.columns = ["support", "pred", "hits"]
+        grp["prob"] = grp["hits"] / grp["support"]
+        grp = grp[grp["support"] >= min_support].reset_index()
 
-    return pd.DataFrame(rows).sort_values(["prob", "support"], ascending=False).reset_index(drop=True)
+        for _, r in grp.iterrows():
+            rules.append({
+                "feat": feat,
+                "cond": int(r[feat]),
+                "pred": int(r["pred"]),
+                "support": int(r["support"]),
+                "prob": float(r["prob"])
+            })
 
-def predict_row(train_df, row, target_shift, threshold=0.20):
-    best_pred = np.nan
-    best_prob = -1.0
-    best_from = ""
+    return pd.DataFrame(rules)
 
-    for feat in SHIFT_COLS:
-        if feat == target_shift or pd.isna(row.get(feat)):
-            continue
+def predict_next(train_df, row, target_shift, min_support=10):
+    bank = build_rule_bank(train_df, target_shift, min_support=min_support)
+    if bank.empty:
+        return np.nan, 0.0, "No rule"
 
-        rules = shift_rules(train_df, target_shift, feat, min_support=8)
-        if rules.empty:
-            continue
+    cand = bank[bank["cond"].isin([int(row[c]) for c in SHIFT_COLS if c != target_shift and pd.notna(row.get(c))])].copy()
+    if cand.empty:
+        return np.nan, 0.0, "No match"
 
-        hit = rules[rules["cond"] == int(row[feat])]
-        if hit.empty:
-            continue
+    cand["weight"] = cand["support"] * cand["prob"]
+    score = cand.groupby("pred")["weight"].sum().sort_values(ascending=False)
 
-        hit = hit.iloc[0]
-        if hit["prob"] >= threshold and hit["prob"] > best_prob:
-            best_prob = float(hit["prob"])
-            best_pred = int(hit["pred"])
-            best_from = feat
+    pred = int(score.index[0])
+    conf = float(score.iloc[0] / score.sum()) if score.sum() > 0 else 0.0
 
-    return best_pred, best_prob, best_from
+    top_rules = cand[cand["pred"] == pred].sort_values(["weight", "prob", "support"], ascending=False)
+    src = ", ".join(top_rules["feat"].head(3).tolist())
+
+    return pred, conf, src
 
 def mark_symbol(actual, pred):
     if pd.isna(actual) or pd.isna(pred):
@@ -123,71 +113,67 @@ try:
 
     with st.sidebar:
         target_shift = st.selectbox("Target shift", SHIFT_COLS, index=0)
-        mode = st.selectbox("Mode", ["Select date", "Latest date"], index=0)
+        min_support = st.slider("Min support", 3, 50, 10)
+        mode = st.selectbox("Mode", ["Select cutoff date", "Latest date"], index=0)
 
     valid_dates = sorted(df["DATE"].dropna().dt.date.unique().tolist())
-    if not valid_dates:
-        st.error("No valid dates found.")
+    if len(valid_dates) < 2:
+        st.error("Not enough dates.")
         st.stop()
 
-    if mode == "Select date":
-        selected_date = st.date_input(
-            "Date चुनें",
-            value=valid_dates[-1],
-            min_value=valid_dates[0],
-            max_value=valid_dates[-1]
-        )
-    else:
-        selected_date = valid_dates[-1]
-        st.write(f"Latest date: **{selected_date}**")
+    cutoff_date = st.date_input(
+        "Cutoff date चुनें",
+        value=valid_dates[-2] if mode == "Select cutoff date" else valid_dates[-2],
+        min_value=valid_dates[0],
+        max_value=valid_dates[-2]
+    )
 
-    sel = df[df["DATE"].dt.date == selected_date]
-    if sel.empty:
-        st.warning("Selected date not found.")
+    cutoff_rows = df[df["DATE"].dt.date == cutoff_date]
+    if cutoff_rows.empty:
+        st.warning("Cutoff date not found.")
         st.stop()
 
-    idx = sel.index[0]
-    train_df = df.iloc[:idx].copy()
-    row = df.iloc[idx]
+    cutoff_idx = cutoff_rows.index[0]
+    if cutoff_idx + 1 >= len(df):
+        st.warning("Next day data not available.")
+        st.stop()
 
-    pred, conf, frm = predict_row(train_df, row, target_shift, threshold=0.20)
+    train_df = df.iloc[:cutoff_idx + 1].copy()
+    next_row = df.iloc[cutoff_idx + 1]
+    next_date = next_row["DATE"].date()
+
+    pred, conf, src = predict_next(train_df, next_row, target_shift, min_support=min_support)
 
     st.subheader("Prediction")
     c1, c2, c3 = st.columns(3)
-    c1.metric("Selected Date", str(selected_date))
-    c2.metric("Target Shift", target_shift)
+    c1.metric("Cutoff Date", str(cutoff_date))
+    c2.metric("Prediction For", str(next_date))
     c3.metric("Predicted Number", "NA" if pd.isna(pred) else int(pred))
-    st.write(f"Prediction is for **{selected_date}**.")
-    st.write(f"Source shift: **{frm if frm else 'None'}**")
+    st.write(f"Source: {src}")
+    st.write(f"Confidence: {conf:.2f}")
 
     st.subheader("Backtest History (Last 20 Days)")
     rows = []
-    start_idx = max(0, len(df) - 20)
+    start_idx = max(0, len(df) - 21)
 
-    for i in range(start_idx, len(df)):
-        cur = df.iloc[i]
-        train = df.iloc[:i].copy()
-        p, c, f = predict_row(train, cur, target_shift, threshold=0.20)
+    for i in range(start_idx, len(df) - 1):
+        tr = df.iloc[:i + 1].copy()
+        actual_row = df.iloc[i + 1]
+        p, c, s = predict_next(tr, actual_row, target_shift, min_support=min_support)
         rows.append({
-            "DATE": cur["DATE"].date(),
-            "ACTUAL": cur[target_shift],
+            "CUTOFF_DATE": df.iloc[i]["DATE"].date(),
+            "PRED_FOR": actual_row["DATE"].date(),
+            "ACTUAL": actual_row[target_shift],
             "PRED": p,
-            "RESULT": mark_symbol(cur[target_shift], p)
+            "RESULT": mark_symbol(actual_row[target_shift], p),
+            "SRC": s
         })
 
-    hist = pd.DataFrame(rows)
+    hist = pd.DataFrame(rows).tail(20)
+    st.dataframe(hist, use_container_width=True)
 
-    if hist.empty:
-        st.warning("History not available.")
-    else:
-        st.dataframe(hist, use_container_width=True)
-        st.markdown("### Tick / Cross View")
-        for _, r in hist.iterrows():
-            color = "green" if r["RESULT"] == "✅" else "red"
-            st.markdown(
-                f"<div style='color:{color};font-weight:bold'>{r['DATE']} | Actual: {r['ACTUAL']} | Pred: {r['PRED']} | {r['RESULT']}</div>",
-                unsafe_allow_html=True
-            )
+    acc = (hist["RESULT"] == "✅").mean() * 100 if not hist.empty else 0
+    st.metric("Backtest Accuracy", f"{acc:.2f}%")
 
 except Exception as e:
     st.error(f"Error: {e}")
