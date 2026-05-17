@@ -1,13 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
 
-st.set_page_config(page_title="Strict History Rule Miner", layout="wide")
+st.set_page_config(page_title="Excel History Predictor", layout="wide")
 
 SHIFT_COLS = ["DS", "FD", "GD", "GL", "DB", "SG", "ZA"]
 
-def clean_val(x):
+def to_num(x):
     if pd.isna(x):
         return np.nan
     s = str(x).strip().upper()
@@ -18,22 +18,10 @@ def clean_val(x):
     except:
         return np.nan
 
-@st.cache_data(show_spinner=False)
-def load_excel(uploaded_file):
-    xls = pd.ExcelFile(uploaded_file)
-    df = pd.read_excel(uploaded_file, sheet_name=xls.sheet_names[0])
+@st.cache_data
+def load_data(file):
+    df = pd.read_excel(file)
     df.columns = [str(c).strip().upper().replace(".", "").replace(" ", "_") for c in df.columns]
-
-    rename = {}
-    for c in df.columns:
-        if c in ["S_NUMBER", "SNUMBER", "S_NUMBER_"]:
-            rename[c] = "S_NUMBER"
-        elif c == "DATE":
-            rename[c] = "DATE"
-        elif c in SHIFT_COLS:
-            rename[c] = c
-    df = df.rename(columns=rename)
-
     if "DATE" not in df.columns:
         raise ValueError("DATE column not found")
 
@@ -41,95 +29,95 @@ def load_excel(uploaded_file):
     for c in SHIFT_COLS:
         if c not in df.columns:
             df[c] = np.nan
-        df[c] = df[c].apply(clean_val)
+        df[c] = df[c].apply(to_num)
 
     df = df.dropna(subset=["DATE"]).sort_values("DATE").reset_index(drop=True)
     return df
 
-def feature_rows(df, idx, target):
+def build_features(df, idx, target):
     row = df.iloc[idx]
     feats = []
+
     if idx - 1 >= 0:
         prev = df.iloc[idx - 1]
-        prev2 = df.iloc[idx - 2] if idx - 2 >= 0 else None
-
         for c in SHIFT_COLS:
-            if c != target and pd.notna(prev.get(c)):
-                feats.append(("L1_" + c, int(prev[c])))
-            if prev2 is not None and c != target and pd.notna(prev2.get(c)):
-                feats.append(("L2_" + c, int(prev2[c])))
+            if c != target and pd.notna(prev[c]):
+                feats.append((f"L1_{c}", int(prev[c])))
 
-        if pd.notna(prev.get("DS")) and pd.notna(prev.get("FD")):
-            feats.append(("P_DS_FD", f"{int(prev['DS'])}_{int(prev['FD'])}"))
-        if pd.notna(prev.get("GD")) and pd.notna(prev.get("GL")):
-            feats.append(("P_GD_GL", f"{int(prev['GD'])}_{int(prev['GL'])}"))
-        if pd.notna(prev.get("DB")) and pd.notna(prev.get("SG")):
-            feats.append(("P_DB_SG", f"{int(prev['DB'])}_{int(prev['SG'])}"))
-
-        d = row["DATE"]
-        feats.append(("WEEKDAY", int(d.weekday())))
-        feats.append(("MONTHDAY", int(d.day)))
-    return feats
-
-def build_rule_bank(train_df, target, min_support=6):
-    bank = defaultdict(lambda: Counter())
-    meta = defaultdict(lambda: {"support": 0, "hits": 0})
-
-    for i in range(2, len(train_df)):
-        row_feats = feature_rows(train_df, i, target)
-        actual = train_df.iloc[i][target]
-        if pd.isna(actual):
-            continue
-        actual = int(actual)
-        for k, v in row_feats:
-            bank[(k, v)][actual] += 1
-            meta[(k, v)]["support"] += 1
-
-    rules = []
-    for key, ctr in bank.items():
-        support = sum(ctr.values())
-        if support < min_support:
-            continue
-        pred, hits = ctr.most_common(1)[0]
-        prob = hits / support
-        if prob >= 0.20:
-            rules.append({
-                "feature": key[0],
-                "value": key[1],
-                "pred": int(pred),
-                "support": int(support),
-                "hits": int(hits),
-                "prob": float(prob)
-            })
-    return pd.DataFrame(rules)
-
-def predict_row(train_df, row, target, rules_df):
-    votes = defaultdict(float)
-    used = []
-    if rules_df.empty:
-        return np.nan, 0.0, "No rules"
-
-    feats = []
-    if len(train_df) >= 2:
-        prev = train_df.iloc[-1]
-        prev2 = train_df.iloc[-2] if len(train_df) >= 2 else None
-
+    if idx - 2 >= 0:
+        prev2 = df.iloc[idx - 2]
         for c in SHIFT_COLS:
-            if c != target and pd.notna(prev.get(c)):
-                feats.append(("L1_" + c, int(prev[c])))
-            if prev2 is not None and c != target and pd.notna(prev2.get(c)):
-                feats.append(("L2_" + c, int(prev2[c])))
+            if c != target and pd.notna(prev2[c]):
+                feats.append((f"L2_{c}", int(prev2[c])))
 
-        if pd.notna(prev.get("DS")) and pd.notna(prev.get("FD")):
-            feats.append(("P_DS_FD", f"{int(prev['DS'])}_{int(prev['FD'])}"))
-        if pd.notna(prev.get("GD")) and pd.notna(prev.get("GL")):
-            feats.append(("P_GD_GL", f"{int(prev['GD'])}_{int(prev['GL'])}"))
-        if pd.notna(prev.get("DB")) and pd.notna(prev.get("SG")):
-            feats.append(("P_DB_SG", f"{int(prev['DB'])}_{int(prev['SG'])}"))
+    if idx - 7 >= 0:
+        prev7 = df.iloc[idx - 7]
+        if pd.notna(prev7[target]):
+            feats.append(("L7_SELF", int(prev7[target])))
 
     feats.append(("WEEKDAY", int(row["DATE"].weekday())))
     feats.append(("MONTHDAY", int(row["DATE"].day)))
 
+    return feats
+
+def train_rule_bank(train_df, target, min_support=5):
+    rules = defaultdict(Counter)
+
+    for i in range(2, len(train_df)):
+        actual = train_df.iloc[i][target]
+        if pd.isna(actual):
+            continue
+        actual = int(actual)
+        feats = build_features(train_df, i, target)
+        for f in feats:
+            rules[f][actual] += 1
+
+    rows = []
+    for key, ctr in rules.items():
+        support = sum(ctr.values())
+        if support < min_support:
+            continue
+        pred, hit = ctr.most_common(1)[0]
+        prob = hit / support
+        rows.append({
+            "feature": key[0],
+            "value": key[1],
+            "pred": int(pred),
+            "support": int(support),
+            "hits": int(hit),
+            "prob": round(prob, 4)
+        })
+
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = out.sort_values(["prob", "support"], ascending=False).reset_index(drop=True)
+    return out
+
+def predict_with_rules(train_df, current_row, target, rules_df):
+    votes = defaultdict(float)
+    feats = []
+
+    if len(train_df) >= 1:
+        prev = train_df.iloc[-1]
+        for c in SHIFT_COLS:
+            if c != target and pd.notna(prev[c]):
+                feats.append((f"L1_{c}", int(prev[c])))
+
+    if len(train_df) >= 2:
+        prev2 = train_df.iloc[-2]
+        for c in SHIFT_COLS:
+            if c != target and pd.notna(prev2[c]):
+                feats.append((f"L2_{c}", int(prev2[c])))
+
+    if len(train_df) >= 7:
+        prev7 = train_df.iloc[-7]
+        if pd.notna(prev7[target]):
+            feats.append(("L7_SELF", int(prev7[target])))
+
+    feats.append(("WEEKDAY", int(current_row["DATE"].weekday())))
+    feats.append(("MONTHDAY", int(current_row["DATE"].day)))
+
+    used = []
     for f, v in feats:
         hit = rules_df[(rules_df["feature"] == f) & (rules_df["value"] == v)]
         if hit.empty:
@@ -137,89 +125,103 @@ def predict_row(train_df, row, target, rules_df):
         for _, r in hit.iterrows():
             w = r["support"] * r["prob"]
             if f.startswith("L1_"):
-                w *= 1.3
-            elif f.startswith("L2_"):
-                w *= 1.1
-            elif f.startswith("P_"):
                 w *= 1.4
+            elif f.startswith("L2_"):
+                w *= 1.2
+            elif f == "L7_SELF":
+                w *= 1.6
             elif f in ["WEEKDAY", "MONTHDAY"]:
                 w *= 1.05
             votes[int(r["pred"])] += w
-            used.append(f"{f}={v}->{int(r['pred'])}")
+            used.append(f"{f}={v} -> {int(r['pred'])}")
 
     if not votes:
-        return np.nan, 0.0, "No match"
+        return [], np.nan, 0.0, "No matching rule"
 
-    pred = max(votes, key=votes.get)
+    ranked = sorted(votes.items(), key=lambda x: x[1], reverse=True)
     total = sum(votes.values())
-    conf = votes[pred] / total if total > 0 else 0.0
-    return pred, float(conf), "; ".join(used[:5])
+    top1 = ranked[0][0]
+    conf = ranked[0][1] / total if total > 0 else 0.0
+    top10 = [n for n, _ in ranked[:10]]
+    return top10, int(top1), round(conf, 4), "; ".join(used[:8])
 
-def sym(a, p):
-    if pd.isna(a) or pd.isna(p):
-        return "❌"
-    return "✅" if int(a) == int(p) else "❌"
+def backtest(df, target, window=180, min_support=5):
+    rows = []
+    start = max(10, len(df) - window - 1)
 
-st.title("Strict History Rule Miner")
+    for i in range(start, len(df) - 1):
+        train = df.iloc[:i+1].copy()
+        if len(train) > window:
+            train = train.iloc[-window:].copy()
 
-uploaded = st.file_uploader("Upload Excel", type=["xlsx"])
-if not uploaded:
+        rules = train_rule_bank(train, target, min_support=min_support)
+        current_row = df.iloc[i+1]
+        top10, top1, conf, src = predict_with_rules(train, current_row, target, rules)
+        actual = current_row[target]
+
+        hit1 = int(pd.notna(actual) and top1 == int(actual))
+        hit10 = int(pd.notna(actual) and int(actual) in top10)
+
+        rows.append({
+            "train_till": train.iloc[-1]["DATE"].date(),
+            "predict_for": current_row["DATE"].date(),
+            "actual": None if pd.isna(actual) else int(actual),
+            "top1": top1,
+            "top10": top10,
+            "conf": conf,
+            "hit_top1": hit1,
+            "hit_top10": hit10,
+            "source": src
+        })
+
+    res = pd.DataFrame(rows)
+    return res
+
+st.title("Excel History Predictor")
+
+uploaded = st.file_uploader("Upload Excel file", type=["xlsx"])
+if uploaded is None:
     st.stop()
 
-df = load_excel(uploaded)
-st.write(f"Rows loaded: {len(df)}")
+df = load_data(uploaded)
 
 with st.sidebar:
     target = st.selectbox("Target shift", SHIFT_COLS, index=0)
-    min_support = st.slider("Min support", 2, 40, 6)
-    prob_cut = st.slider("Min rule probability", 0.05, 0.60, 0.20, 0.01)
-    history_days = st.slider("Training window days", 30, 3650, 365)
+    window = st.slider("Rolling history window", 30, 1000, 180)
+    min_support = st.slider("Min rule support", 2, 30, 5)
 
-results = []
-rule_stats = []
-start_idx = max(2, len(df) - 21)
+st.write("Loaded rows:", len(df))
+st.write(df.head(10))
 
-for i in range(start_idx, len(df) - 1):
-    cutoff = df.iloc[:i+1].copy()
-    if history_days < len(cutoff):
-        cutoff = cutoff.iloc[-history_days:].copy()
+rules = train_rule_bank(df, target, min_support=min_support)
+st.subheader(f"Top rules for {target}")
+st.dataframe(rules.head(50), use_container_width=True)
 
-    rules = build_rule_bank(cutoff, target, min_support=min_support)
-    if not rules.empty:
-        rules = rules[rules["prob"] >= prob_cut].copy()
+bt = backtest(df, target, window=window, min_support=min_support)
+st.subheader("Backtest results")
+st.dataframe(bt.tail(30), use_container_width=True)
 
-    actual_row = df.iloc[i+1]
-    pred, conf, src = predict_row(cutoff, actual_row, target, rules)
+if not bt.empty:
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Top1 Accuracy", f"{bt['hit_top1'].mean()*100:.2f}%")
+    col2.metric("Top10 Hit Rate", f"{bt['hit_top10'].mean()*100:.2f}%")
+    col3.metric("Tests", f"{len(bt)}")
 
-    results.append({
-        "TRAIN_TILL": df.iloc[i]["DATE"].date(),
-        "PRED_FOR": actual_row["DATE"].date(),
-        "ACTUAL": actual_row[target],
-        "PRED": pred,
-        "CONF": round(conf, 3),
-        "RESULT": sym(actual_row[target], pred),
-        "SRC": src
-    })
+st.subheader("Next day prediction")
+latest_train = df.copy()
+if len(latest_train) > window:
+    latest_train = latest_train.iloc[-window:].copy()
 
-    if not rules.empty:
-        rule_stats.append(rules)
+latest_rules = train_rule_bank(latest_train, target, min_support=min_support)
+next_date = latest_train.iloc[-1]["DATE"] + pd.Timedelta(days=1)
+next_row = pd.DataFrame([{"DATE": next_date}])
+top10, top1, conf, src = predict_with_rules(latest_train, next_row.iloc[0], target, latest_rules)
 
-res = pd.DataFrame(results)
-st.subheader("Last 20 Backtest")
-st.dataframe(res.tail(20), use_container_width=True)
+st.write("Top 1:", top1)
+st.write("Confidence:", conf)
+st.write("Top 10:", top10)
+st.write("Rule source:", src)
 
-if not res.empty:
-    acc = (res["RESULT"] == "✅").mean() * 100
-    st.metric("Backtest Accuracy", f"{acc:.2f}%")
-    st.metric("Total Tested", len(res))
-    st.metric("Hits", int((res["RESULT"] == "✅").sum()))
-
-if rule_stats:
-    all_rules = pd.concat(rule_stats, ignore_index=True)
-    top_rules = all_rules.groupby(["feature", "value", "pred"], as_index=False).agg(
-        support=("support", "sum"),
-        hits=("hits", "sum"),
-        prob=("prob", "mean")
-    ).sort_values(["prob", "support"], ascending=False)
-    st.subheader("Top Rules")
-    st.dataframe(top_rules.head(50), use_container_width=True)
+if top10:
+    st.success(f"Best prediction for {target}: {top1}")
+    st.info(f"Top 10 candidates: {top10}")
