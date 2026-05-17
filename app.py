@@ -2,9 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from collections import defaultdict, Counter
-from sklearn.metrics import accuracy_score
 
-st.set_page_config(page_title="Shift Analyzer", layout="wide")
+st.set_page_config(page_title="Shift Predictor", layout="wide")
 
 SHIFT_COLS = ["DS", "FD", "GD", "GL", "DB", "SG", "ZA"]
 
@@ -23,27 +22,28 @@ def clean_num(x):
 def load_excel(uploaded_file):
     xls = pd.ExcelFile(uploaded_file)
     df = pd.read_excel(uploaded_file, sheet_name=xls.sheet_names[0])
+
     df.columns = [str(c).strip().upper().replace(".", "").replace(" ", "_") for c in df.columns]
 
     rename_map = {}
     for c in df.columns:
         if c in ["S_NUMBER", "SNUMBER", "S_NUMBER_"]:
             rename_map[c] = "S_NUMBER"
-        if c == "DATE":
+        elif c == "DATE":
             rename_map[c] = "DATE"
-        if c in SHIFT_COLS:
+        elif c in SHIFT_COLS:
             rename_map[c] = c
+
     df = df.rename(columns=rename_map)
 
     if "DATE" not in df.columns:
         raise ValueError("DATE column not found.")
-    if "S_NUMBER" not in df.columns:
-        for alt in ["S_NUMBER", "SNUMBER", "S NUMBER"]:
-            if alt in df.columns:
-                df = df.rename(columns={alt: "S_NUMBER"})
-                break
+
+    if "S_NUMBER" not in df.columns and "S NUMBER" in df.columns:
+        df = df.rename(columns={"S NUMBER": "S_NUMBER"})
 
     df["DATE"] = pd.to_datetime(df["DATE"], errors="coerce")
+
     for c in SHIFT_COLS:
         if c not in df.columns:
             df[c] = np.nan
@@ -51,12 +51,6 @@ def load_excel(uploaded_file):
 
     df = df.dropna(subset=["DATE"]).sort_values("DATE").reset_index(drop=True)
     return df
-
-def add_units(df):
-    out = df.copy()
-    for c in SHIFT_COLS:
-        out[f"{c}_UNIT"] = out[c] % 10
-    return out
 
 def shift_rules(train_df, target_shift, feature_shift, min_support=8):
     data = train_df[[feature_shift, target_shift]].dropna().copy()
@@ -81,28 +75,30 @@ def shift_rules(train_df, target_shift, feature_shift, min_support=8):
                 "support": int(total),
                 "prob": float(sup / total)
             })
+
     if not rows:
         return pd.DataFrame(columns=["cond", "pred", "support", "prob"])
+
     return pd.DataFrame(rows).sort_values(["prob", "support"], ascending=False).reset_index(drop=True)
 
 def auto_threshold(df, target_shift):
-    candidates = [0.08, 0.10, 0.12, 0.15, 0.18, 0.20, 0.22, 0.25, 0.28, 0.30, 0.35, 0.40]
-    results = []
-    base = df.copy().reset_index(drop=True)
+    candidates = [0.08, 0.10, 0.12, 0.15, 0.18, 0.20, 0.22, 0.25, 0.28, 0.30]
+    base = df.reset_index(drop=True)
+    best_th = 0.20
+    best_score = -1
 
     for th in candidates:
-        preds, actuals = [], []
+        hits = 0
+        total = 0
         for i in range(30, len(base) - 1):
             train = base.iloc[:i].copy()
             row = base.iloc[i]
             actual = base.iloc[i + 1][target_shift]
-            best_pred = np.nan
-            best_prob = -1.0
 
+            best_pred = np.nan
+            best_prob = -1
             for feat in SHIFT_COLS:
-                if feat == target_shift:
-                    continue
-                if pd.isna(row[feat]):
+                if feat == target_shift or pd.isna(row[feat]):
                     continue
                 rules = shift_rules(train, target_shift, feat, min_support=8)
                 if rules.empty:
@@ -116,83 +112,31 @@ def auto_threshold(df, target_shift):
                     best_pred = int(hit["pred"])
 
             if not pd.isna(best_pred) and not pd.isna(actual):
-                preds.append(int(best_pred))
-                actuals.append(int(actual))
+                total += 1
+                if int(best_pred) == int(actual):
+                    hits += 1
 
-        acc = accuracy_score(actuals, preds) if preds else 0.0
-        results.append({"threshold": th, "accuracy": acc, "pred_count": len(preds)})
+        score = hits / total if total else 0
+        if score > best_score:
+            best_score = score
+            best_th = th
 
-    res = pd.DataFrame(results)
-    best = res.sort_values(["accuracy", "pred_count"], ascending=False).iloc[0]
-    return float(best["threshold"]), res
+    return best_th
 
-def rolling_backtest(df, target_shift, threshold):
-    base = df.copy().reset_index(drop=True)
-    rows = []
-
-    for i in range(30, len(base) - 1):
-        train = base.iloc[:i].copy()
-        row = base.iloc[i]
-        actual = base.iloc[i + 1][target_shift]
-
-        best_pred = np.nan
-        best_prob = -1.0
-        best_from = ""
-
-        for feat in SHIFT_COLS:
-            if feat == target_shift:
-                continue
-            if pd.isna(row[feat]):
-                continue
-
-            rules = shift_rules(train, target_shift, feat, min_support=8)
-            if rules.empty:
-                continue
-
-            hit = rules[rules["cond"] == int(row[feat])]
-            if hit.empty:
-                continue
-
-            hit = hit.iloc[0]
-            if hit["prob"] >= threshold and hit["prob"] > best_prob:
-                best_prob = float(hit["prob"])
-                best_pred = int(hit["pred"])
-                best_from = feat
-
-        rows.append({
-            "DATE": base.iloc[i + 1]["DATE"],
-            "ACTUAL": actual,
-            "PRED": best_pred,
-            "FROM": best_from,
-            "CONF": best_prob if best_prob >= 0 else np.nan,
-            "HIT": int((not pd.isna(best_pred)) and (not pd.isna(actual)) and int(best_pred) == int(actual))
-        })
-
-    return pd.DataFrame(rows)
-
-def predict_latest(df, target_shift, threshold):
-    base = df.copy().reset_index(drop=True)
-    if len(base) < 2:
-        return np.nan, np.nan, ""
-
-    latest = base.iloc[-1]
-    train = base.iloc[:-1].copy()
-
+def predict_row(train_df, row, target_shift, threshold):
     best_pred = np.nan
     best_prob = -1.0
     best_from = ""
 
     for feat in SHIFT_COLS:
-        if feat == target_shift:
-            continue
-        if pd.isna(latest[feat]):
+        if feat == target_shift or pd.isna(row[feat]):
             continue
 
-        rules = shift_rules(train, target_shift, feat, min_support=8)
+        rules = shift_rules(train_df, target_shift, feat, min_support=8)
         if rules.empty:
             continue
 
-        hit = rules[rules["cond"] == int(latest[feat])]
+        hit = rules[rules["cond"] == int(row[feat])]
         if hit.empty:
             continue
 
@@ -204,158 +148,139 @@ def predict_latest(df, target_shift, threshold):
 
     return best_pred, best_prob, best_from
 
-def make_history_table(df, target_shift, threshold):
-    base = df.copy().reset_index(drop=True)
-    rows = []
+def get_selected_rows(df, selected_date):
+    selected = df[df["DATE"].dt.date == selected_date]
+    if selected.empty:
+        return None, None
+    idx = selected.index[0]
+    train_df = df.iloc[:idx].copy()
+    row = df.iloc[idx]
+    return train_df, row
 
-    for i in range(30, len(base)):
-        train = base.iloc[:i].copy()
-        cur = base.iloc[i]
-        actual = cur[target_shift]
+def result_mark(actual, pred):
+    if pd.isna(actual) or pd.isna(pred):
+        return "❌"
+    return "✅" if int(actual) == int(pred) else "❌"
 
-        pred = np.nan
-        prob = -1.0
-        from_shift = ""
+def colored_result(actual, pred):
+    if pd.isna(actual) or pd.isna(pred):
+        return "<span style='color:red;font-weight:bold'>❌</span>"
+    if int(actual) == int(pred):
+        return "<span style='color:green;font-weight:bold'>✅</span>"
+    return "<span style='color:red;font-weight:bold'>❌</span>"
 
-        for feat in SHIFT_COLS:
-            if feat == target_shift:
-                continue
-            if pd.isna(cur[feat]):
-                continue
-
-            rules = shift_rules(train, target_shift, feat, min_support=8)
-            if rules.empty:
-                continue
-
-            hit = rules[rules["cond"] == int(cur[feat])]
-            if hit.empty:
-                continue
-
-            hit = hit.iloc[0]
-            if hit["prob"] >= threshold and hit["prob"] > prob:
-                prob = float(hit["prob"])
-                pred = int(hit["pred"])
-                from_shift = feat
-
-        rows.append({
-            "DATE": cur["DATE"],
-            "ACTUAL": actual,
-            "PRED": pred,
-            "FROM": from_shift,
-            "CONF": prob if prob >= 0 else np.nan,
-            "RESULT": "✅" if (not pd.isna(pred) and not pd.isna(actual) and int(pred) == int(actual)) else "❌"
-        })
-
-    return pd.DataFrame(rows)
-
-def monthly_accuracy(history_df):
-    if history_df.empty:
-        return pd.DataFrame(columns=["MONTH", "ACCURACY", "TOTAL"])
-    x = history_df.copy()
-    x["MONTH"] = x["DATE"].dt.to_period("M").astype(str)
-    out = x.groupby("MONTH").agg(ACCURACY=("RESULT", lambda s: (s == "✅").mean()), TOTAL=("RESULT", "count")).reset_index()
-    return out
-
-def last_n_accuracy(history_df, n):
-    if history_df.empty:
-        return 0.0
-    x = history_df.tail(n)
-    if x.empty:
-        return 0.0
-    return float((x["RESULT"] == "✅").mean())
-
-st.title("Shift Data Analyzer & Prediction App")
+st.title("Shift Predictor")
 
 uploaded = st.file_uploader("Excel file upload करें", type=["xlsx"])
 
-if uploaded is None:
-    st.info("0DSP0.xlsx upload करें.")
+if not uploaded:
+    st.info("Excel file upload करें.")
     st.stop()
 
 try:
     df = load_excel(uploaded)
-    df = add_units(df)
-
-    st.success(f"File loaded: {len(df)} rows")
+    st.success(f"Loaded rows: {len(df)}")
 
     with st.sidebar:
         st.header("Settings")
         target_shift = st.selectbox("Target shift", SHIFT_COLS, index=0)
-        min_rows = st.slider("Backtest start row", 10, 100, 30)
-        show_raw = st.toggle("Show raw data", value=True)
+        mode = st.selectbox("Mode", ["Select single date", "Latest date"], index=0)
+        fast_mode = st.checkbox("Fast mode", value=True)
 
-    if show_raw:
-        st.subheader("Raw Data")
-        st.dataframe(df, use_container_width=True)
+    valid_dates = sorted(df["DATE"].dropna().dt.date.unique().tolist())
+    if not valid_dates:
+        st.error("No valid dates found.")
+        st.stop()
 
-    st.subheader("Auto Threshold Selection")
-    th, th_table = auto_threshold(df, target_shift)
-    st.write(f"Selected threshold: **{th:.2f}**")
-    st.dataframe(th_table, use_container_width=True)
+    threshold = auto_threshold(df, target_shift)
 
-    st.subheader("Rolling Backtest")
-    bt = rolling_backtest(df, target_shift, th)
-
-    if bt.empty:
-        st.warning("Backtest ke liye data kam hai.")
+    st.subheader("Selected Date")
+    if mode == "Select single date":
+        selected_date = st.date_input(
+            "Date चुनें",
+            value=valid_dates[-1],
+            min_value=valid_dates[0],
+            max_value=valid_dates[-1]
+        )
+        prediction_label = "This date prediction"
     else:
-        st.metric("Overall Backtest Accuracy", f"{bt['HIT'].mean():.4f}")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Last 10 Days Accuracy", f"{last_n_accuracy(bt, 10):.4f}")
-        c2.metric("Last 20 Days Accuracy", f"{last_n_accuracy(bt, 20):.4f}")
-        c3.metric("Last 60 Days Accuracy", f"{last_n_accuracy(bt, 60):.4f}")
+        selected_date = valid_dates[-1]
+        st.write(f"Latest available date: **{selected_date}**")
+        prediction_label = "Latest date prediction"
 
-        st.dataframe(bt.tail(100), use_container_width=True)
+    st.subheader("Prediction")
+    train_df, row = get_selected_rows(df, selected_date)
 
-        m = monthly_accuracy(bt)
-        st.subheader("Monthly Accuracy")
-        st.dataframe(m, use_container_width=True)
+    if row is None:
+        st.warning("Selected date data not found.")
+        st.stop()
 
-        st.subheader("Backtest History with Tick/Cross")
-        view = bt.copy()
-        st.dataframe(view, use_container_width=True)
+    pred, conf, frm = predict_row(train_df, row, target_shift, threshold)
 
-        csv = view.to_csv(index=False).encode("utf-8")
-        st.download_button("Download backtest CSV", csv, "backtest_history.csv", "text/csv")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Selected Date", str(selected_date))
+    c2.metric("Target Shift", target_shift)
+    c3.metric("Predicted Number", "NA" if pd.isna(pred) else int(pred))
+    c4.metric("Confidence", "NA" if conf < 0 else f"{conf:.3f}")
 
-    st.subheader("Latest Prediction")
-    pred, conf, frm = predict_latest(df, target_shift, th)
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Target Shift", target_shift)
-    c2.metric("Predicted Number", "NA" if pd.isna(pred) else int(pred))
-    c3.metric("Confidence", "NA" if pd.isna(conf) else f"{conf:.3f}")
+    st.write(f"Prediction type: **{prediction_label}**")
     st.write(f"Source shift: **{frm if frm else 'None'}**")
 
-    st.subheader("History with Result Mark")
-    hist = make_history_table(df, target_shift, th)
-    st.dataframe(hist.tail(20), use_container_width=True)
+    st.subheader("Latest History")
+    hist_rows = []
+    start_idx = max(30, len(df) - 20)
 
-    st.subheader("Shift-wise Rules")
-    rule_rows = []
-    train_all = df.iloc[:-1].copy() if len(df) > 1 else df.copy()
-    for feat in SHIFT_COLS:
-        if feat == target_shift:
-            continue
-        r = shift_rules(train_all, target_shift, feat, min_support=8)
-        if not r.empty:
-            top = r.iloc[0]
-            rule_rows.append({
-                "FROM": feat,
-                "TO": target_shift,
-                "COND": int(top["cond"]),
-                "PRED": int(top["pred"]),
-                "SUPPORT": int(top["support"]),
-                "PROB": round(float(top["prob"]), 4)
-            })
-    rules_df = pd.DataFrame(rule_rows)
-    st.dataframe(rules_df, use_container_width=True)
+    for i in range(start_idx, len(df)):
+        cur = df.iloc[i]
+        train = df.iloc[:i].copy()
+        actual = cur[target_shift]
+        p, c, f = predict_row(train, cur, target_shift, threshold)
+        hist_rows.append({
+            "DATE": cur["DATE"].date(),
+            "ACTUAL": actual,
+            "PRED": p,
+            "FROM": f,
+            "CONF": None if c < 0 else round(c, 3),
+            "RESULT": colored_result(actual, p)
+        })
 
-    st.subheader("How to use")
-    st.write("1. Upload Excel.")
-    st.write("2. Select target shift.")
-    st.write("3. App auto-selects threshold from history.")
-    st.write("4. Backtest accuracy, monthly accuracy, and tick/cross history show on same page.")
+    hist = pd.DataFrame(hist_rows)
+
+    if hist.empty:
+        st.warning("History not available.")
+    else:
+        st.markdown(
+            """
+            <style>
+            .result-green { color: green; font-weight: bold; }
+            .result-red { color: red; font-weight: bold; }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
+        def style_result(val):
+            if "green" in str(val):
+                return "color: green; font-weight: bold;"
+            return "color: red; font-weight: bold;"
+
+        show = hist.copy()
+        st.dataframe(show, use_container_width=True)
+
+        st.markdown("### Tick / Cross View")
+        for _, r in show.iterrows():
+            mark = "✅" if r["RESULT"] == "<span style='color:green;font-weight:bold'>✅</span>" else "❌"
+            color = "green" if mark == "✅" else "red"
+            st.markdown(
+                f"<div style='padding:6px 0;color:{color};font-weight:bold'>"
+                f"{r['DATE']} | Actual: {r['ACTUAL']} | Pred: {r['PRED']} | {mark}"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+    st.subheader("Note")
+    st.write("ऊपर की prediction selected date या latest date के लिए है.")
+    st.write("History में green tick सही prediction को दिखाता है, red cross गलत prediction को.")
 
 except Exception as e:
     st.error(f"Error: {e}")
