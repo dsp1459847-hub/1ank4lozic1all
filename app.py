@@ -2,175 +2,178 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# साधारण, साफ़ और प्रोफेशनल पेज सेटिंग (कोई भड़कीला रंग नहीं)
-st.set_page_config(page_title="Ultimate Shift Optimizer", layout="wide")
+# Page Configuration
+st.set_page_config(page_title="MAYA v48.5 - Real Backtest Engine", layout="wide")
 
-st.title("Shift Prediction Engine (Anti-Failure Optimization)")
-st.write("Dream Light & Gate of Night Systems — Strict Efficiency Lock Loop")
-st.markdown("---")
+# Custom UI Styling
+st.markdown("""
+    <style>
+    .live-res { background: #0f172a; color: #38bdf8; padding: 15px; border-radius: 12px; text-align: center; border: 2px solid #38bdf8; margin-bottom: 20px; }
+    .metric-card { background: #ffffff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border-top: 4px solid #3b82f6; }
+    .stat-val { font-size: 24px; font-weight: bold; color: #1e3a8a; }
+    .badge-win { background: #dcfce7; color: #15803d; padding: 4px 8px; border-radius: 6px; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
 
-@st.cache_data
-def load_and_clean_data(file):
-    try:
-        df = pd.read_excel(file)
-        
-        # सही डेट कॉलम ढूंढना ताकि एरर न आए
-        date_col = None
-        for col in df.columns:
-            if 'DATE' in str(col).upper():
-                date_col = col
-                break
-        
-        if date_col is not None:
-            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            df.rename(columns={date_col: 'Date'}, inplace=True)
-        else:
-            df.rename(columns={df.columns[1]: 'Date'}, inplace=True)
-            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-            
-        df = df.dropna(subset=['Date']).sort_values('Date').reset_index(drop=True)
-        
-        # S. NUMBER और अन्य गैर-शिफ्ट कॉलम अलग करना
-        shift_cols = [col for col in df.columns if 'S.' not in str(col).upper() and 'DATE' not in str(col).upper() and 'SEASON' not in str(col).upper()]
-        
-        for col in shift_cols:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-        return df, shift_cols
-    except Exception as e:
-        st.error(f"Error loading file: {e}")
-        return None, None
+st.title("🎯 MAYA v48.5 (Mathematical Efficiency & Strike Engine)")
 
-# अंकों की एडवांस्ड पलटी और मिरर फैमिली (मजबूत वेकेंसी के लिए)
-def get_advanced_mirror(n):
-    if np.isnan(n): return []
-    n = int(n)
-    t1, t2 = n // 10, n % 10
-    cut = {0:5, 1:6, 2:7, 3:8, 4:9, 5:0, 6:1, 7:2, 8:3, 9:4}
-    base_family = [n, cut[t1]*10 + t2, t1*10 + cut[t2], cut[t1]*10 + cut[t2]]
-    palti = [(x%10)*10 + (x//10) for x in base_family]
-    return list(set(base_family + palti))
-
-# स्वयं को सुधारने वाला लूप (Target 60% - 80% Efficiency)
-def run_automated_optimization(df, shift_cols, target_idx):
-    global_history = df.iloc[:target_idx]
-    current_day_data = df.iloc[target_idx]
+# --- 32 CORE PATTERNS GENERATOR ---
+def generate_32_patterns(base_val):
+    if not str(base_val).isdigit():
+        return set()
+    val = int(base_val)
+    a, b = val // 10, val % 10
+    patterns = set()
     
-    # परीक्षण के लिए पिछले 45 से 90 दिनों की विंडो
-    test_start = max(0, target_idx - 45)
-    test_window = df.iloc[test_start:target_idx]
-    
-    if len(global_history) < 20:
-        return None
-        
-    final_predictions = {}
-    
-    for target_shift in shift_cols:
-        best_strategy = None
-        best_accuracy = 0.0
-        
-        # रणनीतियों का मैट्रिक्स जो लूप बार-बार टेस्ट करेगा
-        strategies = [
-            {"gap1": 12, "gap2": 4, "gap3": 1},
-            {"gap1": 2, "gap2": 18, "gap3": 8},   # परसों के पैटर्न पर भारी वेटेज
-            {"gap1": 0, "gap2": 10, "gap3": 15},  # नर्सों के पैटर्न पर भारी वेटेज
-            {"gap1": 5, "gap2": 5, "gap3": 5}
-        ]
-        
-        # टेस्ट लूप: यह पिछले रिकॉर्ड्स पर खुद को तब तक सुधारेगा जब तक सही रास्ता न मिले
-        for current_strat in strategies:
-            success_count = 0
-            evaluated_days = 0
-            
-            for i in range(len(test_window)):
-                loop_idx = test_window.index[i]
-                actual_result = test_window.iloc[i][target_shift]
-                if np.isnan(actual_result): continue
-                
-                evaluated_days += 1
-                sim_history = df.iloc[:loop_idx]
-                
-                score_card = np.zeros(100)
-                for g, w_key in [(1, "gap1"), (2, "gap2"), (3, "gap3")]:
-                    if len(sim_history) >= g:
-                        past_val = sim_history.iloc[-g][target_shift]
-                        if not np.isnan(past_val):
-                            for node in get_advanced_mirror(past_val):
-                                score_card[node] += current_strat[w_key]
-                
-                if np.sum(score_card) > 0:
-                    predicted_val = np.argsort(score_card)[::-1][0]
-                    if int(actual_result) == predicted_val:
-                        success_count += 1
-            
-            current_acc = (success_count / evaluated_days * 100) if evaluated_days > 0 else 0
-            if current_acc >= best_accuracy:
-                best_accuracy = current_acc
-                best_strategy = current_strat
-                
-        # जो रणनीति टेस्ट में सबसे खरी उतरी, केवल उसी से आज का प्रेडिक्शन निकलेगा
-        final_scores = np.zeros(100)
-        chosen_strat = best_strategy if best_strategy else {"gap1": 5, "gap2": 15, "gap3": 10}
-        
-        for g, w_key in [(1, "gap1"), (2, "gap2"), (3, "gap3")]:
-            p_val = global_history.iloc[-g][target_shift] if len(global_history) >= g else np.nan
-            if not np.isnan(p_val):
-                for node in get_advanced_mirror(p_val):
-                    final_scores[node] += chosen_strat[w_key]
-                    
-        # हाल ही में खुली संख्याओं को ब्लॉक या कमजोर करना (Anti-Repeat Layer)
-        for g in [1, 2]:
-            p_val = global_history.iloc[-g][target_shift] if len(global_history) >= g else np.nan
-            if not np.isnan(p_val):
-                final_scores[int(p_val)] *= 0.05
-                
-        top_indices = np.argsort(final_scores)[::-1]
-        
-        # यदि बैक-टेस्टिंग का वास्तविक स्कोर कम है, तो यह कस्टमाइज्ड फिल्टर को और कड़ा करेगा
-        calibrated_accuracy = max(best_accuracy, 68.7)
-        
-        real_res_val = current_day_data[target_shift]
-        real_res_str = f"{int(real_res_val):02d}" if not np.isnan(real_res_val) else "XX"
-        
-        final_predictions[target_shift] = {
-            "Single_Ank": f"{top_indices[0]:02d}",
-            "Top_10_Support": [f"{x:02d}" for x in top_indices[1:11]],
-            "Accuracy_Matrix": f"{round(calibrated_accuracy, 2)}%",
-            "Real_Result": real_res_str
-        }
-        
-    return final_predictions
+    # 32 Fixed Structural Shifts Matrix
+    shifts = [
+        (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1),
+        (2, 0), (-2, 0), (0, 2), (0, -2), (2, 2), (-2, -2), (2, -2), (-2, 2),
+        (5, 0), (0, 5), (5, 5), (5, 1), (1, 5), (5, -1), (-1, 5),
+        (5, 2), (2, 5), (5, -2), (-2, 5), (3, 0), (0, 3), (3, 3), (-3, -3), (0, 0)
+    ]
+    for sa, sb in shifts:
+        patterns.add(f"{(a + sa) % 10}{(b + sb) % 10}")
+    return patterns
 
-# --- यूजर इंटरफेस (Plain Standard Look) ---
-st.sidebar.subheader("Upload Data")
-uploaded_file = st.sidebar.file_uploader("Upload 0DSP0.xlsx", type=["xlsx"])
-
-if uploaded_file is not None:
-    df, shift_cols = load_and_clean_data(uploaded_file)
+# --- GAP SCANNER ---
+def find_worst_gaps_90(df, idx, col):
+    gap_scores = {}
+    for g in range(1, 91):
+        if idx - g - 10 < 0: continue
+        score = 0
+        for check in range(idx-10, idx):
+            if check - g < 0: continue
+            pred = str(df.iloc[check-g].get(col, "XX")).split('.')[0]
+            act = str(df.iloc[check].get(col, "XX")).split('.')[0]
+            if pred.isdigit() and act.isdigit() and pred == act: score += 1
+        gap_scores[g] = score
     
-    if df is not None and len(shift_cols) > 0:
-        st.sidebar.success("File Loaded.")
-        
-        st.sidebar.subheader("Select Date")
-        available_dates = df['Date'].dropna().dt.date.unique()
-        selected_date = st.sidebar.selectbox("Choose Date", sorted(available_dates, reverse=True))
-        
-        matching_rows = df[df['Date'].dt.date == selected_date]
-        if not matching_rows.empty:
-            idx = matching_rows.index[0]
-            
-            results = run_automated_optimization(df, shift_cols, idx)
-            
-            if results:
-                st.write(f"### 📅 Optimization Date: {selected_date.strftime('%d-%m-%Y')}")
-                st.write("सिस्टम ने पिछले इतिहास का विश्लेषण करके कमजोर फॉर्मूलों को ब्लॉक कर दिया है।")
-                st.markdown("---")
+    worst_gaps = sorted(gap_scores, key=gap_scores.get)[:5]
+    bad_a, bad_b = [], []
+    for wg in worst_gaps:
+        val = str(df.iloc[idx-wg].get(col, 0)).split('.')[0]
+        if val.isdigit():
+            bad_a.append(int(val)//10)
+            bad_b.append(int(val)%10)
+    return max(set(bad_a), key=bad_a.count) if bad_a else 0, max(set(bad_b), key=bad_b.count) if bad_b else 5, worst_gaps
+
+# --- ADVANCED CORE MATRIX LOGIC ---
+def calculate_m_engine(df, idx, shift):
+    flow = {'FB': 'DS', 'GB': 'FB', 'GL': 'GB', 'DS': 'GL', 'SG': 'DB', 'DB': 'GL'}
+    base_col = flow.get(shift, 'DS')
+    
+    val = 0
+    for i in range(1, 15):
+        if idx - i >= 0:
+            raw = df.iloc[idx-i].get(base_col, 0)
+            if str(raw).isdigit() and int(raw) > 0:
+                val = int(raw); break
                 
-                for shift in shift_cols:
-                    st.text(f"--- SHIFT: {shift} ---")
-                    st.write(f"**Today's Real Result:** `{results[shift]['Real_Result']}` | **Optimized Single Ank:** `{results[shift]['Single_Ank']}` | **Verified Accuracy Range:** `{results[shift]['Accuracy_Matrix']}`")
-                    st.write(f"**Top 10 Support (High Probability Grid):** {', '.join(results[shift]['Top_10_Support'])}")
-                    st.markdown("---")
-else:
-    st.info("Please upload your Excel file from the sidebar to activate the self-improving loop.")
+    d1, d2 = val // 10, val % 10
+    pa = (d1 + 1) % 10 if d1 != d2 else (d1 + 5) % 10
+    pb = (d2 + 1) % 10
+    ra, rb = (pa + 5) % 10, (pb + 5) % 10
+    
+    blocked = set()
+    for a in {pa, ra}:
+        for i in range(10): blocked.add(f"{a}{i}")
+    for b in {pb, rb}:
+        for i in range(10): blocked.add(f"{i}{b}")
         
+    v48_base = [str(i).zfill(2) for i in range(100) if str(i).zfill(2) not in blocked]
+    wa, wb, _ = find_worst_gaps_90(df, idx, base_col)
+    
+    v48_stable = [j for j in v48_base if not (j.startswith(str(wa)) or j.endswith(str(wb)))]
+    
+    prev_res = str(df.iloc[idx-1].get(base_col, 0)).split('.')[0] if idx - 1 >= 0 else "0"
+    p32_set = generate_32_patterns(prev_res)
+    
+    common = [n for n in v48_stable if n in p32_set]
+    uniq_v48 = [n for n in v48_stable if n not in p32_set]
+    uniq_p32 = [n for n in p32_set if n not in v48_stable]
+    
+    return {"common": common, "uniq_v48": uniq_v48, "uniq_p32": uniq_p32, "v48_all": v48_stable}
+
+# --- FILE UPLOADER ---
+uploaded_file = st.file_uploader("📂 Upload Your Master Excel File", type=["xlsx", "csv"])
+
+if uploaded_file:
+    df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
+    df.columns = [str(c).strip().upper() for c in df.columns]
+    df = df.rename(columns={'FD': 'FB', 'GD': 'GB', 'FBD': 'FB', 'GZB': 'GB'})
+    
+    sel_date = st.selectbox("📅 Select Analysis Date:", options=df['DATE'].astype(str).unique().tolist()[::-1])
+    target_s = st.selectbox("🎰 Target Shift Group:", options=['DS', 'FB', 'GB', 'GL', 'DB', 'SG'])
+    
+    idx = df[df['DATE'].astype(str) == sel_date].index[0]
+    live_val = str(df.iloc[idx].get(target_s, "XX")).split('.')[0]
+    
+    st.markdown(f'<div class="live-res">🎯 CURRENT TARGET LIVE RESULT: <span style="font-size:32px;">{live_val}</span></div>', unsafe_allow_html=True)
+    
+    data_sets = calculate_m_engine(df, idx, target_s)
+    
+    # --- UI DISPLAY FOR TODAY'S TEAMS ---
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown('<div class="metric-card" style="border-top-color:#ef4444;"><h4>💎 High-Power Common</h4></div>', unsafe_allow_html=True)
+        st.write(f"Total Numbers: **{len(data_sets['common'])}**")
+        st.code(", ".join(data_sets['common']) if data_sets['common'] else "No Commons")
+    with c2:
+        st.markdown('<div class="metric-card" style="border-top-color:#10b981;"><h4>📦 Unique V48 Gaps</h4></div>', unsafe_allow_html=True)
+        st.write(f"Total Numbers: **{len(data_sets['uniq_v48'])}**")
+        st.code(", ".join(data_sets['uniq_v48'][:15]))
+    with c3:
+        st.markdown('<div class="metric-card" style="border-top-color:#f59e0b;"><h4>🌀 Unique 32-Pattern</h4></div>', unsafe_allow_html=True)
+        st.write(f"Total Numbers: **{len(data_sets['uniq_p32'])}**")
+        st.code(", ".join(data_sets['uniq_p32'][:15]))
+
+    # --- THE REAL MATHEMATICAL BACKTEST ENGINE ---
+    st.divider()
+    st.subheader("📊 15-Day Deep Strike Reality Check (Next 4 Shifts Proof)")
+    
+    b_records = []
+    c_hits, v_hits, p_hits = 0, 0, 0
+    total_eval_days = 0
+    
+    for i in range(max(0, idx - 15), idx + 1):
+        total_eval_days += 1
+        m_sets = calculate_m_engine(df, i, target_s)
+        
+        flags = {"common": "❌", "v48": "❌", "p32": "❌"}
+        
+        # Checking across lookahead window (Next 4 shifts)
+        for step in range(1, 5):
+            if i + step >= len(df): continue
+            f_res = str(df.iloc[i + step].get(target_s, "XX")).split('.')[0]
+            if f_res.isdigit():
+                f_num = str(int(f_res)).zfill(2)
+                if f_num in m_sets['common']: flags['common'] = f"🎯 Hit (S{step})"
+                if f_num in m_sets['uniq_v48']: flags['v48'] = f"✅ Hit (S{step})"
+                if f_num in m_sets['uniq_p32']: flags['p32'] = f"⚡ Hit (S{step})"
+        
+        if "Hit" in flags['common']: c_hits += 1
+        if "Hit" in flags['v48']: v_hits += 1
+        if "Hit" in flags['p32']: p_hits += 1
+        
+        b_records.append({
+            "Date": df.iloc[i]['DATE'],
+            "Base Result": str(df.iloc[i].get(target_s, "XX")).split('.')[0],
+            "Common Tier": flags['common'],
+            "Unique V48 Tier": flags['v48'],
+            "Unique 32-Pattern Tier": flags['p32']
+        })
+        
+    # Percentages Calculation
+    c_p = round((c_hits / total_eval_days) * 100, 1) if total_eval_days else 0
+    v_p = round((v_hits / total_eval_days) * 100, 1) if total_eval_days else 0
+    p_p = round((p_hits / total_eval_days) * 100, 1) if total_eval_days else 0
+    
+    # Live Leaderboard Display
+    sc1, sc2, sc3 = st.columns(3)
+    sc1.metric("Common Hit Rate (Real)", f"{c_p}%", f"Total: {c_hits} Days")
+    sc2.metric("V48 Unique Hit Rate (Real)", f"{v_p}%", f"Total: {v_hits} Days")
+    sc3.metric("32-Pattern Unique Hit Rate (Real)", f"{p_p}%", f"Total: {p_hits} Days")
+    
+    st.table(pd.DataFrame(b_records))
+    
